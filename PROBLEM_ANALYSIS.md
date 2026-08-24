@@ -138,47 +138,77 @@ Manifest V3 provides `chrome.offscreen.createDocument({ url: "offscreen.html", r
 
 ---
 
-## 8. Resolution Implemented (v6.0.0) — In-Tab Hidden Iframe Host
+## 8. Resolution Implemented (v6.1.0) — Off-Screen Popup Window + One-Time Focus Handshake
 
 The stall was caused by automating a **separate background browser tab**
-(`active: false, pinned: true`). Chromium occlusion-throttles a tab like that
-the moment it isn't the foreground tab of its window — timers slow to
-~1/sec, rendering suspends, and Angular/React SPAs pause their own input
-binding on `document.hidden`. The "spoof `document.hidden`" and
-`MessageChannel` tricks (Section 5) only ever papered over this; the send
-button stayed `aria-disabled` until the user physically clicked into that
-tab, which is exactly the visible tab-jump the user rejected.
+(`active: false, pinned: true`) in the user's own window. Chromium
+occlusion-throttles a tab like that the moment it isn't the foreground tab —
+timers slow to ~1/sec, rendering suspends, and Angular/React SPAs pause
+their own input binding on `document.hidden`. The "spoof `document.hidden`"
+and `MessageChannel` tricks (Section 5) only ever papered over this; the
+send button stayed `aria-disabled` until the user physically clicked into
+that tab, which is exactly the visible tab-jump the user rejected.
 
-**Fix:** stop creating a second tab entirely. The AI provider now loads in a
-hidden `<iframe class="ai-session-frame">` that lives **inside `viewer.html`
-itself** (see `viewer.js` → `ensureAiFrame()` / `#aiSessionHost`, styled in
-`viewer.css`). Because that iframe's parent tab is the dashboard tab the
-user is actively looking at, it is never occluded and never throttled —
-no spoofing needed.
+### Attempt 1 (v6.0.0, reverted): in-tab hidden `<iframe>`
 
-- `background.js` → `openOrFocusViewer()` now waits for the dashboard tab to
-  fully load, then passes its `tabId` down through the pipeline.
-- `services/webSessionBridge.js` → `getOrCreateSessionFrame()` messages
-  `viewer.js` (`ENSURE_AI_FRAME`) to create/reuse that hidden iframe instead
-  of `chrome.tabs.create()`. `automateChatInPage()` is unchanged in logic but
-  is now injected with `allFrames: true` into every frame of the dashboard
-  tab; a hostname guard at the top makes it a no-op everywhere except the one
-  iframe that actually matches the requested AI provider.
+First tried loading the AI provider into a hidden `<iframe>` inside
+`viewer.html` itself, relying on `rules.json`'s existing `x-frame-options`/CSP
+stripping to let it embed. This failed for two separate reasons discovered
+during live testing:
+
+1. `chrome.scripting.executeScript({ allFrames: true })` also tries to inject
+   into the dashboard's own top frame (`chrome-extension://…/viewer.html`),
+   which throws `Cannot access contents of url … Extension manifest must
+   request permission to access this host.` — a bug in that approach, not
+   fixable by adding permissions (extension pages aren't grantable hosts).
+2. More fundamentally: even once framed, ChatGPT's own session-sync calls
+   started **403ing** (`OBI synchronization is not available`). A
+   cross-origin iframe is a genuinely different (third-party) storage
+   partition from a real top-level navigation — session/auth cookies that
+   work fine in a real tab don't reliably carry into an embedded iframe
+   under Chromium's third-party storage partitioning. The DOM loads, but the
+   authenticated session underneath it can break. This is a platform
+   constraint, not something fixable in extension code.
+
+### Attempt 2 (v6.1.0, current): off-screen popup window
+
+Reverted to a **real browser tab** (so cookies behave normally, exactly like
+today's manual chatgpt.com/gemini.google.com usage) — but instead of
+creating it in the user's own window (`chrome.tabs.create`), it's created as
+its own separate popup window parked at off-screen coordinates
+(`chrome.windows.create({ type: "popup", focused: false, left: -2400, top:
+-2400, … })`). Nothing appears in the user's tab strip because it isn't in
+the user's window at all.
+
+That still leaves the focus-dependent quirk from Section 2.A.1: Chromium
+ignores `execCommand()`/native selection APIs in a tab whose *window* has
+never genuinely held OS focus. Rather than the old "tab-activate/switch-back"
+handshake (which was 100% reliable but visibly flickered the tab strip
+because it happened inside the user's own window), `getOrCreateSessionTab()`
+now flashes real OS focus onto the **off-screen** popup window for ~400ms
+immediately after creating it, then hands focus straight back to whatever
+window the user was actually looking at. Because the popup is positioned
+off-screen, this focus flip produces no visible change on the user's screen
+at all. This only needs to happen once per session tab (right after
+creation) — subsequent prompts reuse the already-"unlocked" tab.
+
+- `services/webSessionBridge.js` → `getOrCreateSessionTab()` replaces the old
+  `chrome.tabs.create(...)` with `chrome.windows.create(...)`, plus the
+  one-time focus handshake described above. `automateChatInPage()` and
+  `tryRenameConversation()` are unchanged from the original tab-based design.
+- `background.js` and `viewer.js`/`viewer.html`/`viewer.css` needed no
+  changes for this — the AI session tab is fully self-contained inside
+  `webSessionBridge.js` again, same as the original architecture.
 - The existing shimmer skeleton card (Study Notes) and the "Synthesizing…"
-  spinner row (Chat Hub) are the loading overlay the user asked for — they
-  already fully hide the raw chat UI and vanish automatically the instant
-  `chrome.storage.local` is updated with the finished note/response, since
-  both views are driven by `chrome.storage.onChanged`.
-- `rules.json`'s header-stripping rules (Section 5, item 4) — previously
-  unused — are now load-bearing: they're what allow the AI sites to be
-  framed at all.
+  spinner row (Chat Hub) remain the loading overlay — they already fully
+  hide the automation happening underneath and vanish automatically once
+  `chrome.storage.local` is updated with the finished note/response, driven
+  by `chrome.storage.onChanged`.
 
-**Trade-off:** this still assumes the dashboard tab stays the active/focused
-tab while generating (same assumption the original design already made —
-`openOrFocusViewer()` force-focuses it). If the user switches away to a
-different tab mid-generation, the dashboard tab itself would now be the one
-subject to occlusion throttling. Solving that fully would require the
-off-screen-window approach (Section 6, Option 1), which was not implemented
-here since it wasn't what was requested and needs live-session testing this
-environment can't perform.
+**Trade-off:** the ~400ms native-focus flash, while imperceptible on-screen
+(the window is off-screen), does briefly move real OS keyboard focus away
+from whatever window the user is typing into. This is a smaller and shorter
+disruption than the rejected same-window tab-switch, but isn't provably zero
+— it needs live verification in Chrome with real logged-in sessions, which
+this environment cannot perform.
 

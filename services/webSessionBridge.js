@@ -1,13 +1,20 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// services/webSessionBridge.js  v6.0
+// services/webSessionBridge.js  v6.1
 //
 // Truly Silent Background AI Engine:
-//  • Zero new tabs — the AI provider is loaded in a hidden <iframe> living
-//    inside the NoteFlow dashboard tab itself (see viewer.js "ai-session-frame"),
-//    covered by the dashboard's own loading overlay/shimmer UI.
-//  • Because the iframe's host tab (the dashboard) stays active & focused while
-//    the user watches it, Chromium never applies background-tab occlusion
-//    throttling to it — no stalls, no needing to click into a background tab.
+//  • Iframe embedding was tried and rejected (v6.0): stripping X-Frame-Options
+//    lets the page LOAD, but Chromium still treats a cross-site iframe as a
+//    third-party context — the AI site's own auth cookies get partitioned out,
+//    so ChatGPT/Gemini's internal session calls 403 even though the DOM shows.
+//    Real, reliable session cookies require an actual top-level navigation.
+//  • So the AI session runs in a real tab — but inside its own separate popup
+//    window parked off-screen (negative coordinates), never in the user's
+//    current window/tab strip. Nothing to see, nothing to click into.
+//  • Chromium disables execCommand()/selection APIs in a tab that has never
+//    received genuine OS window focus. We flash real focus onto that
+//    off-screen window for a few hundred ms right after creating it, then
+//    immediately hand focus back to whatever window the user is actually
+//    looking at — invisible on screen since the window itself is off-screen.
 //  • Deep Angular/Quill (Gemini), Slate (ChatGPT), ProseMirror (Claude) DOM injection.
 //  • Anti-throttling & unthrottled MessageChannel observation loop.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -216,21 +223,8 @@ function buildPrompt(rawContent, topicOverride) {
 }
 
 // ── Injected Automation Function ─────────────────────────────────────────────
-// NOTE: This is injected with `allFrames: true` into every frame of the
-// dashboard tab (the top dashboard document itself, plus every hidden AI
-// session iframe). Frames that aren't the intended AI provider bail out
-// immediately by returning null so only the matching frame does any work.
 function automateChatInPage(cfg, promptText) {
   return (async () => {
-    try {
-      const targetHost = new URL(cfg.hostPattern).hostname;
-      if (location.hostname !== targetHost && !location.hostname.endsWith("." + targetHost)) {
-        return null;
-      }
-    } catch {
-      return null;
-    }
-
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
     // ── 0. Anti-Throttling & Visibility Spoofing ─────────────────────────
@@ -448,7 +442,7 @@ function automateChatInPage(cfg, promptText) {
     });
 
     if (!responseText) throw new Error(`No response received from ${cfg.label}.`);
-    return { text: responseText, href: location.href };
+    return responseText;
   })();
 }
 
@@ -478,61 +472,99 @@ function normalizeNotes(parsed) {
   };
 }
 
-// ── Silent session frame management (in-tab iframe, no new browser tabs) ─────
+// ── Off-screen session window management ─────────────────────────────────────
 
-// chrome.tabs.sendMessage can race viewer.js's listener registration right
-// after the dashboard tab is created — retry briefly instead of failing hard.
-async function sendToViewerTab(viewerTabId, payload, attempts = 6) {
-  let lastErr;
-  for (let i = 0; i < attempts; i++) {
-    try {
-      return await chrome.tabs.sendMessage(viewerTabId, payload);
-    } catch (err) {
-      lastErr = err;
-      await new Promise((r) => setTimeout(r, 300));
+function waitForTabComplete(tabId, timeoutMs = 30000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(listener);
+      reject(new Error("Timed out waiting for the AI session tab to load."));
+    }, timeoutMs);
+    function listener(id, info) {
+      if (id === tabId && info.status === "complete") {
+        clearTimeout(timer);
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve();
+      }
     }
-  }
-  throw lastErr;
+    chrome.tabs.onUpdated.addListener(listener);
+    chrome.tabs.get(tabId, (tab) => {
+      if (tab?.status === "complete") {
+        clearTimeout(timer);
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve();
+      }
+    });
+  });
 }
 
-// Asks the dashboard tab (viewer.js) to create/reuse a hidden iframe pointed
-// at the AI provider, and resolves once that frame has finished loading.
-async function getOrCreateSessionFrame(cfg, providerKey, viewerTabId) {
+// Gets (or creates) the real browser tab that hosts a given AI provider's
+// session, living in its own off-screen popup window so it never shows up
+// in the user's current window/tab strip.
+async function getOrCreateSessionTab(cfg) {
   const stored = await chrome.storage.local.get(cfg.sessionStorageKey);
   const savedUrl = stored[cfg.sessionStorageKey];
-  const targetUrl = savedUrl || cfg.baseUrl;
 
-  let res;
+  if (savedUrl) {
+    const openTabs = await chrome.tabs.query({ url: `${savedUrl}*` });
+    if (openTabs.length > 0) {
+      return { tab: openTabs[0], isNewChat: false };
+    }
+  }
+
+  // Remember whichever window the user is actually looking at so we can
+  // hand focus straight back to it after the handshake below.
+  const activeWindow = await chrome.windows.getLastFocused({ windowTypes: ["normal"] }).catch(() => null);
+
+  const win = await chrome.windows.create({
+    url: savedUrl || cfg.baseUrl,
+    type: "popup",
+    focused: false,
+    left: -2400,
+    top: -2400,
+    width: 900,
+    height: 720,
+  });
+
+  const tab = win?.tabs?.[0];
+  if (!tab) throw new Error(`Could not open a silent session window for ${cfg.label}.`);
+
+  await waitForTabComplete(tab.id);
+  await new Promise((r) => setTimeout(r, 1000));
+
+  let reopened = await chrome.tabs.get(tab.id);
+  let isNewChat = !savedUrl;
+
+  if (savedUrl && !reopened.url?.startsWith(cfg.hostPattern)) {
+    // Saved deep-link didn't resolve (expired/invalid) — fall back to a fresh chat.
+    await chrome.tabs.update(tab.id, { url: cfg.baseUrl });
+    await waitForTabComplete(tab.id);
+    await new Promise((r) => setTimeout(r, 1000));
+    reopened = await chrome.tabs.get(tab.id);
+    isNewChat = true;
+  }
+
+  // One-time native-focus handshake: Chromium ignores execCommand()/selection
+  // APIs in a tab whose window has never genuinely held OS focus. Flash real
+  // focus onto this off-screen window just long enough to unlock that, then
+  // return focus to the user's own window immediately — since this window is
+  // parked off-screen, none of it is visible or disruptive.
   try {
-    res = await sendToViewerTab(viewerTabId, {
-      type: "ENSURE_AI_FRAME",
-      provider: providerKey,
-      url: targetUrl,
-    });
+    await chrome.windows.update(win.id, { focused: true });
+    await new Promise((r) => setTimeout(r, 400));
   } catch {
-    throw new Error(
-      `Lost connection to the NoteFlow dashboard tab. Please keep the dashboard tab open while notes are generated.`
-    );
+    /* non-fatal */
+  } finally {
+    if (activeWindow?.id) {
+      await chrome.windows.update(activeWindow.id, { focused: true }).catch(() => {});
+    }
   }
 
-  if (!res?.ok) {
-    throw new Error(res?.error || `Could not prepare a silent session frame for ${cfg.label}.`);
-  }
-
-  // Give a freshly-loaded SPA a beat to hydrate before we start typing into it.
-  if (!res.reused) {
-    await new Promise((r) => setTimeout(r, 1200));
-  }
-
-  return { isNewChat: !savedUrl };
+  return { tab: reopened, isNewChat };
 }
 
 function tryRenameConversation(cfg, title) {
   try {
-    const targetHost = new URL(cfg.hostPattern).hostname;
-    if (location.hostname !== targetHost && !location.hostname.endsWith("." + targetHost)) {
-      return false;
-    }
     for (const sel of cfg.titleSelectors || []) {
       const el = document.querySelector(sel);
       if (!el) continue;
@@ -550,27 +582,26 @@ function tryRenameConversation(cfg, title) {
 
 // ── Note Synthesis (Strictly in Background) ──────────────────────────────────
 
-async function getNotesViaWebSession(provider, rawContent, topicOverride, viewerTabId) {
+async function getNotesViaWebSession(provider, rawContent, topicOverride) {
   const cfg = PROVIDERS[provider];
   if (!cfg) throw new Error("Unknown provider: " + provider);
-  if (!viewerTabId) throw new Error("Missing dashboard tab context for silent AI automation.");
 
-  const { isNewChat } = await getOrCreateSessionFrame(cfg, provider, viewerTabId);
+  const { tab, isNewChat } = await getOrCreateSessionTab(cfg);
 
   const promptText = buildPrompt(rawContent, topicOverride);
-  let outcome;
+  let result;
   try {
     const res = await chrome.scripting.executeScript({
-      target: { tabId: viewerTabId, allFrames: true },
+      target: { tabId: tab.id },
       func: automateChatInPage,
       args: [cfg, promptText],
     });
-    outcome = res.map((r) => r.result).find(Boolean);
+    result = res[0]?.result;
 
     if (isNewChat) {
       await chrome.scripting
         .executeScript({
-          target: { tabId: viewerTabId, allFrames: true },
+          target: { tabId: tab.id },
           func: tryRenameConversation,
           args: [cfg, SESSION_CHAT_TITLE],
         })
@@ -578,44 +609,47 @@ async function getNotesViaWebSession(provider, rawContent, topicOverride, viewer
     }
   } catch (err) {
     throw new Error(`Automation failed on ${cfg.label}: ${err.message}`);
+  } finally {
+    try {
+      const finalTab = await chrome.tabs.get(tab.id);
+      if (finalTab.url?.startsWith(cfg.hostPattern)) {
+        await chrome.storage.local.set({ [cfg.sessionStorageKey]: finalTab.url });
+      }
+    } catch {
+      /* non-fatal */
+    }
   }
 
-  if (!outcome?.text) throw new Error(`No response captured from ${cfg.label}. Please make sure you are signed in.`);
-
-  if (outcome.href) {
-    await chrome.storage.local.set({ [cfg.sessionStorageKey]: outcome.href }).catch(() => {});
-  }
-
-  return normalizeNotes(extractJson(outcome.text));
+  if (!result) throw new Error(`No response captured from ${cfg.label}. Please make sure you are signed in.`);
+  return normalizeNotes(extractJson(result));
 }
 
 // ── Interactive Multi-AI Chat Handoff ────────────────────────────────────────
 
-async function sendChatMessageViaWebSession(provider, userMessage, contextHistory, viewerTabId) {
+async function sendChatMessageViaWebSession(provider, userMessage, contextHistory) {
   const cfg = PROVIDERS[provider];
   if (!cfg) throw new Error("Unknown provider: " + provider);
-  if (!viewerTabId) throw new Error("Missing dashboard tab context for silent AI automation.");
 
-  const { isNewChat } = await getOrCreateSessionFrame(cfg, provider, viewerTabId);
+  const { tab, isNewChat } = await getOrCreateSessionTab(cfg);
 
   let formattedPrompt = userMessage;
   if (contextHistory && contextHistory.trim()) {
     formattedPrompt = `[Context from prior conversation:\n${contextHistory.trim()}\n]\n\nUser Question: ${userMessage}`;
   }
 
-  let outcome;
+  let result;
   try {
     const res = await chrome.scripting.executeScript({
-      target: { tabId: viewerTabId, allFrames: true },
+      target: { tabId: tab.id },
       func: automateChatInPage,
       args: [cfg, formattedPrompt],
     });
-    outcome = res.map((r) => r.result).find(Boolean);
+    result = res[0]?.result;
 
     if (isNewChat) {
       await chrome.scripting
         .executeScript({
-          target: { tabId: viewerTabId, allFrames: true },
+          target: { tabId: tab.id },
           func: tryRenameConversation,
           args: [cfg, "NoteFlow AI — Chat Hub"],
         })
@@ -623,15 +657,19 @@ async function sendChatMessageViaWebSession(provider, userMessage, contextHistor
     }
   } catch (err) {
     throw new Error(`Chat failed on ${cfg.label}: ${err.message}`);
+  } finally {
+    try {
+      const finalTab = await chrome.tabs.get(tab.id);
+      if (finalTab.url?.startsWith(cfg.hostPattern)) {
+        await chrome.storage.local.set({ [cfg.sessionStorageKey]: finalTab.url });
+      }
+    } catch {
+      /* non-fatal */
+    }
   }
 
-  if (!outcome?.text) throw new Error(`No response from ${cfg.label}.`);
-
-  if (outcome.href) {
-    await chrome.storage.local.set({ [cfg.sessionStorageKey]: outcome.href }).catch(() => {});
-  }
-
-  return outcome.text;
+  if (!result) throw new Error(`No response from ${cfg.label}.`);
+  return result;
 }
 
 // ── Provider detection ────────────────────────────────────────────────────────

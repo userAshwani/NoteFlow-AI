@@ -386,13 +386,6 @@
   <!-- ── Notification Toast ──────────────────────────────────────────────── -->
   <div id="toast" class="floating-toast hidden"></div>
 
-  <!-- ── Silent AI Session Frame Host ─────────────────────────────────────────
-       Hidden iframes that carry the actual Gemini/ChatGPT/Claude/etc. chat
-       session. They live inside THIS tab (not a separate background tab) so
-       Chromium never throttles them while the dashboard is open — the user
-       only ever sees the loading shimmer/spinner, never the raw chat UI. -->
-  <div id="aiSessionHost" class="ai-session-host" aria-hidden="true"></div>
-
   <script src="viewer.js"></script>
 </body>
 </html>
