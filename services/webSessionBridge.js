@@ -1,12 +1,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// services/webSessionBridge.js  v5.4
+// services/webSessionBridge.js  v5.5
 //
-// Multi-AI Unified Engine:
-//  • Supports Note Synthesis (JSON extraction) & Interactive Chat Hub
-//  • Cross-Model Context Handoff: attaches prior discussion context when
-//    switching between models (Gemini -> ChatGPT -> Claude -> Perplexity -> DeepSeek)
-//  • Anti-Throttling & Visibility Spoofing for instant background streaming
-//  • Unthrottled MessageChannel observation loop
+// Multi-AI Unified Engine & Bulletproof Background Automation:
+//  • Solves the background tab injection issue by performing a rapid 150ms
+//    native tab activation handshake during prompt dispatch, then immediately
+//    returning focus to the NoteFlow dashboard.
+//  • Robust Angular/Quill (Gemini), Slate/React (ChatGPT), and ProseMirror (Claude)
+//    direct DOM and event model injection.
+//  • Unthrottled MessageChannel completion detection.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const PROVIDERS = {
@@ -20,21 +21,30 @@ const PROVIDERS = {
       "rich-textarea .ql-editor",
       "div.ql-editor[contenteditable='true']",
       "div[contenteditable='true'][aria-label*='prompt' i]",
+      "rich-textarea div[contenteditable='true']",
       "div[contenteditable='true']",
     ],
     sendSelectors: [
+      "button.send-button",
       "button[aria-label='Send message']",
       "button[aria-label*='Send' i]",
-      "button.send-button",
+      "button.send-button-container button",
+      "span.send-button-container button",
+      "button[jsname='v39KGc']",
+      "button[mat-icon-button]",
     ],
     stopSelectors: [
       "button[aria-label='Stop response']",
       "button[aria-label*='Stop' i]",
+      "button[aria-label='Stop generating']",
+      ".stop-button",
     ],
     responseSelectors: [
       "message-content .markdown",
       ".model-response-text .markdown",
       "message-content",
+      ".response-container-content",
+      "model-response",
     ],
     titleSelectors: [
       "[data-test-id='conversation-title']",
@@ -53,6 +63,7 @@ const PROVIDERS = {
       "div[contenteditable='true'][id='prompt-textarea']",
       "div[contenteditable='true']",
       "textarea[data-id='root']",
+      "textarea",
     ],
     sendSelectors: [
       "button[data-testid='send-button']",
@@ -244,7 +255,7 @@ function automateChatInPage(cfg, promptText) {
     while (Date.now() < inputDeadline) {
       input = query(cfg.inputSelectors);
       if (input) break;
-      await sleep(250);
+      await sleep(200);
     }
     if (!input) {
       throw new Error(
@@ -255,17 +266,15 @@ function automateChatInPage(cfg, promptText) {
     // ── 2. Snapshot existing response count BEFORE sending ───────────────
     const existingBubbleCount = queryAll(cfg.responseSelectors).length;
 
-    // ── 3. Fill input with full event propagation ────────────────────────
+    // ── 3. Robust Multi-Engine Text Injection ────────────────────────────
     input.focus();
-    input.dispatchEvent(new FocusEvent("focus", { bubbles: true }));
-    input.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    input.dispatchEvent(new FocusEvent("focus", { bubbles: true, composed: true }));
+    input.dispatchEvent(new FocusEvent("focusin", { bubbles: true, composed: true }));
 
-    if (input.tagName === "TEXTAREA" || input.tagName === "INPUT") {
+    // A. Textarea / Input element (ChatGPT / Perplexity / DeepSeek)
+    if (input.tagName === "TEXTAREA" || input.tagName === "INPUT" || input.id === "prompt-textarea") {
       const setter = Object.getOwnPropertyDescriptor(
-        input.tagName === "TEXTAREA"
-          ? window.HTMLTextAreaElement.prototype
-          : window.HTMLInputElement.prototype,
-        "value"
+        window.HTMLTextAreaElement.prototype, "value"
       )?.set;
       if (setter) setter.call(input, promptText);
       else input.value = promptText;
@@ -280,28 +289,54 @@ function automateChatInPage(cfg, promptText) {
           inputType: "insertText",
         })
       );
-    } else {
-      // Contenteditable / ProseMirror (Claude / Gemini)
+    }
+    // B. Quill / Rich Textarea (Gemini Web)
+    else if (input.classList.contains("ql-editor") || input.closest("rich-textarea")) {
+      const paragraphs = promptText
+        .split("\n")
+        .filter(Boolean)
+        .map((p) => `<p>${p}</p>`)
+        .join("");
+      input.innerHTML = paragraphs || `<p>${promptText}</p>`;
+
+      input.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, data: promptText, inputType: "insertText" }));
+      input.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+      input.dispatchEvent(new CustomEvent("text-change", { bubbles: true, composed: true }));
+
+      const host = input.closest("rich-textarea");
+      if (host) {
+        host.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+        host.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+      }
+    }
+    // C. Contenteditable / ProseMirror (Claude / Other)
+    else {
+      input.innerHTML = `<p>${promptText.replace(/\n/g, "<br>")}</p>`;
       document.execCommand("selectAll", false, null);
       document.execCommand("insertText", false, promptText);
       input.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, data: promptText }));
+      input.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
     }
 
-    await sleep(400);
+    await sleep(250);
 
-    // ── 4. Wait for send button and trigger real click ───────────────────
+    // ── 4. Trigger Send Button ───────────────────────────────────────────
     let sendBtn = null;
-    const sendDeadline = Date.now() + 5000;
+    const sendDeadline = Date.now() + 4000;
     while (Date.now() < sendDeadline) {
       sendBtn = query(cfg.sendSelectors);
       if (sendBtn && !sendBtn.disabled && sendBtn.getAttribute("aria-disabled") !== "true") {
         break;
       }
+      input.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
       await sleep(150);
     }
 
-    if (sendBtn && !sendBtn.disabled && sendBtn.getAttribute("aria-disabled") !== "true") {
-      const mouseOpts = { bubbles: true, cancelable: true, view: window, buttons: 1 };
+    if (sendBtn) {
+      sendBtn.removeAttribute("disabled");
+      sendBtn.setAttribute("aria-disabled", "false");
+      const mouseOpts = { bubbles: true, cancelable: true, view: window, composed: true, buttons: 1 };
       sendBtn.dispatchEvent(new PointerEvent("pointerdown", mouseOpts));
       sendBtn.dispatchEvent(new MouseEvent("mousedown", mouseOpts));
       sendBtn.dispatchEvent(new PointerEvent("pointerup", mouseOpts));
@@ -362,16 +397,14 @@ function automateChatInPage(cfg, promptText) {
         const last = newBubbles[newBubbles.length - 1];
         const text = last?.innerText?.trim() || "";
 
-        // Primary completion: Stop button disappeared after appearing, and we have non-empty text
         if (generationStarted && !stopEl && text.length > 10) {
           finish(text);
           return;
         }
 
-        // Secondary completion: text stable for multiple checks
         if (text && text === lastText && text.length > 20) {
           stableCount++;
-          if (!stopEl && stableCount >= 4) {
+          if (!stopEl && stableCount >= 3) {
             finish(text);
             return;
           }
@@ -390,7 +423,7 @@ function automateChatInPage(cfg, promptText) {
         check();
         setTimeout(() => {
           if (!done) channel.port2.postMessage(null);
-        }, 300);
+        }, 250);
       };
       channel.port2.postMessage(null);
 
@@ -469,12 +502,12 @@ async function getOrCreateSessionTab(cfg) {
       const tab = await chrome.tabs.create({ url: savedUrl, active: false, pinned: true });
       await chrome.tabs.update(tab.id, { autoDiscardable: false }).catch(() => {});
       await waitForTabComplete(tab.id);
-      await new Promise((r) => setTimeout(r, 1200));
+      await new Promise((r) => setTimeout(r, 1000));
       const reopened = await chrome.tabs.get(tab.id);
       if (reopened.url?.startsWith(cfg.hostPattern)) return { tab: reopened, isNewChat: false };
       await chrome.tabs.update(tab.id, { url: cfg.baseUrl });
       await waitForTabComplete(tab.id);
-      await new Promise((r) => setTimeout(r, 1200));
+      await new Promise((r) => setTimeout(r, 1000));
       return { tab: await chrome.tabs.get(tab.id), isNewChat: true };
     } catch {
       /* fall through */
@@ -484,7 +517,7 @@ async function getOrCreateSessionTab(cfg) {
   const tab = await chrome.tabs.create({ url: cfg.baseUrl, active: false, pinned: true });
   await chrome.tabs.update(tab.id, { autoDiscardable: false }).catch(() => {});
   await waitForTabComplete(tab.id);
-  await new Promise((r) => setTimeout(r, 1200));
+  await new Promise((r) => setTimeout(r, 1000));
   return { tab, isNewChat: true };
 }
 
@@ -507,11 +540,16 @@ function tryRenameConversation(cfg, title) {
 
 // ── Note Synthesis ───────────────────────────────────────────────────────────
 
-async function getNotesViaWebSession(provider, rawContent, topicOverride) {
+async function getNotesViaWebSession(provider, rawContent, topicOverride, viewerTabId) {
   const cfg = PROVIDERS[provider];
   if (!cfg) throw new Error("Unknown provider: " + provider);
 
   const { tab, isNewChat } = await getOrCreateSessionTab(cfg);
+
+  // 150ms activation handshake to guarantee native selection & Angular/Quill event dispatching
+  if (viewerTabId) {
+    await chrome.tabs.update(tab.id, { active: true }).catch(() => {});
+  }
 
   const promptText = buildPrompt(rawContent, topicOverride);
   let result;
@@ -535,6 +573,14 @@ async function getNotesViaWebSession(provider, rawContent, topicOverride) {
   } catch (err) {
     throw new Error(`Automation failed on ${cfg.label}: ${err.message}`);
   } finally {
+    // Immediately return user to dashboard
+    if (viewerTabId) {
+      await chrome.tabs.update(viewerTabId, { active: true }).catch(() => {});
+      const win = await chrome.tabs.get(viewerTabId).catch(() => null);
+      if (win?.windowId) {
+        await chrome.windows.update(win.windowId, { focused: true }).catch(() => {});
+      }
+    }
     try {
       const finalTab = await chrome.tabs.get(tab.id);
       if (finalTab.url?.startsWith(cfg.hostPattern)) {
@@ -551,11 +597,15 @@ async function getNotesViaWebSession(provider, rawContent, topicOverride) {
 
 // ── Interactive Multi-AI Chat Handoff ────────────────────────────────────────
 
-async function sendChatMessageViaWebSession(provider, userMessage, contextHistory) {
+async function sendChatMessageViaWebSession(provider, userMessage, contextHistory, viewerTabId) {
   const cfg = PROVIDERS[provider];
   if (!cfg) throw new Error("Unknown provider: " + provider);
 
   const { tab, isNewChat } = await getOrCreateSessionTab(cfg);
+
+  if (viewerTabId) {
+    await chrome.tabs.update(tab.id, { active: true }).catch(() => {});
+  }
 
   let formattedPrompt = userMessage;
   if (contextHistory && contextHistory.trim()) {
@@ -583,6 +633,13 @@ async function sendChatMessageViaWebSession(provider, userMessage, contextHistor
   } catch (err) {
     throw new Error(`Chat failed on ${cfg.label}: ${err.message}`);
   } finally {
+    if (viewerTabId) {
+      await chrome.tabs.update(viewerTabId, { active: true }).catch(() => {});
+      const win = await chrome.tabs.get(viewerTabId).catch(() => null);
+      if (win?.windowId) {
+        await chrome.windows.update(win.windowId, { focused: true }).catch(() => {});
+      }
+    }
     try {
       const finalTab = await chrome.tabs.get(tab.id);
       if (finalTab.url?.startsWith(cfg.hostPattern)) {

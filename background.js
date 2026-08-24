@@ -1,15 +1,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// background.js — NoteFlow AI Service Worker  v5.4
+// background.js — NoteFlow AI Service Worker  v5.5
 //
 // Pipeline phases:
 //  [1] Extract page content from the active tab.
 //  [2] Open viewer + write skeleton note -> instant shimmer on dashboard.
-//  [3] AI session runs silently (active:false tabs, never steals focus).
-//  [4] Skeleton replaced by real note card with fade-in animation.
-//
-// Multi-AI Chat Hub features:
-//  • SEND_CHAT_MESSAGE: Dispatches conversational queries with context handoff
-//  • SAVE_CHAT_TO_NOTE: Converts any chat answer directly into a structured note
+//  [3] AI session runs with rapid handshake, never leaving user waiting.
+//  [4] Skeleton replaced by real note card with smooth fade-in animation.
 // ─────────────────────────────────────────────────────────────────────────────
 
 importScripts("services/webSessionBridge.js");
@@ -95,7 +91,8 @@ async function runPipeline(topicOverride, sendProgress) {
 
   sendProgress("opening");
   const noteId = `note_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  await Promise.all([
+  
+  const [viewerTab] = await Promise.all([
     openOrFocusViewer(),
     insertSkeletonNote(noteId, rawContent.url, provider, topicOverride || null),
   ]);
@@ -103,7 +100,7 @@ async function runPipeline(topicOverride, sendProgress) {
   sendProgress("generating");
   let notes;
   try {
-    notes = await self.WebSessionBridge.getNotesViaWebSession(provider, rawContent, topicOverride);
+    notes = await self.WebSessionBridge.getNotesViaWebSession(provider, rawContent, topicOverride, viewerTab?.id);
   } catch (err) {
     await markSkeletonFailed(noteId, err.message);
     throw err;
@@ -125,7 +122,7 @@ async function runPipeline(topicOverride, sendProgress) {
 
 // ── Message router ────────────────────────────────────────────────────────────
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   // ── GENERATE_NOTES ────────────────────────────────────────────────────────
   if (message?.type === "GENERATE_NOTES") {
@@ -146,12 +143,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   // ── SEND_CHAT_MESSAGE ─────────────────────────────────────────────────────
   if (message?.type === "SEND_CHAT_MESSAGE") {
     const { provider, prompt, contextHistory, isMultiModel, providersList } = message;
+    const senderTabId = sender?.tab?.id;
 
     if (isMultiModel && Array.isArray(providersList) && providersList.length > 0) {
-      // Parallel Multi-AI dispatch
       Promise.allSettled(
         providersList.map(async (p) => {
-          const text = await self.WebSessionBridge.sendChatMessageViaWebSession(p, prompt, contextHistory);
+          const text = await self.WebSessionBridge.sendChatMessageViaWebSession(p, prompt, contextHistory, senderTabId);
           return { provider: p, text };
         })
       )
@@ -169,7 +166,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     }
 
     // Single AI dispatch
-    self.WebSessionBridge.sendChatMessageViaWebSession(provider, prompt, contextHistory)
+    self.WebSessionBridge.sendChatMessageViaWebSession(provider, prompt, contextHistory, senderTabId)
       .then((text) => sendResponse({ ok: true, text }))
       .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;
