@@ -402,17 +402,19 @@ function buildSkeletonCard(note) {
   el.id = skelIdFor(note.id);
   el.dataset.noteId = note.id;
   el.innerHTML = `
-    <div class="skeleton-status-pill">
-      <span class="skeleton-spinner"></span>
-      <span>Generating with ${escHtml(pInfo.label)} in background…</span>
+    <div class="logo-loading-hero">
+      <div class="logo-orbit-ring">
+        <img class="logo-loading-avatar" src="https://ashwanitiwari.com/logo.png" alt="NoteFlow AI" />
+      </div>
+      <div class="logo-loading-text-group">
+        <h3 class="logo-loading-title">Synthesizing Notes with ${escHtml(pInfo.label)}…</h3>
+        <p class="logo-loading-sub">Extracting syntax, key takeaways, and code snippets in the background</p>
+      </div>
     </div>
-    <div style="display: flex; flex-direction: column; gap: 8px;">
+    <div class="shimmer-lines-container">
       <span class="shimmer-block" style="width: 60%; height: 22px;"></span>
-      <span class="shimmer-block" style="width: 35%; height: 12px;"></span>
-    </div>
-    <span class="shimmer-block" style="width: 100%; height: 50px;"></span>
-    <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 4px;">
-      <span class="shimmer-block" style="width: 90%; height: 14px;"></span>
+      <span class="shimmer-block" style="width: 100%; height: 44px; margin-top: 6px;"></span>
+      <span class="shimmer-block" style="width: 90%; height: 14px; margin-top: 8px;"></span>
       <span class="shimmer-block" style="width: 80%; height: 14px;"></span>
       <span class="shimmer-block" style="width: 85%; height: 14px;"></span>
     </div>

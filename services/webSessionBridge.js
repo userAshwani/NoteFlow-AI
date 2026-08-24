@@ -1,13 +1,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// services/webSessionBridge.js  v5.5
+// services/webSessionBridge.js  v5.6
 //
-// Multi-AI Unified Engine & Bulletproof Background Automation:
-//  • Solves the background tab injection issue by performing a rapid 150ms
-//    native tab activation handshake during prompt dispatch, then immediately
-//    returning focus to the NoteFlow dashboard.
-//  • Robust Angular/Quill (Gemini), Slate/React (ChatGPT), and ProseMirror (Claude)
-//    direct DOM and event model injection.
-//  • Unthrottled MessageChannel completion detection.
+// Truly Silent Background AI Engine:
+//  • Zero tab jumping, zero focus stealing — tabs run with active: false, pinned: true.
+//  • Deep Angular/Quill (Gemini), Slate (ChatGPT), ProseMirror (Claude) DOM injection.
+//  • Anti-throttling & unthrottled MessageChannel observation loop.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const PROVIDERS = {
@@ -23,6 +20,7 @@ const PROVIDERS = {
       "div[contenteditable='true'][aria-label*='prompt' i]",
       "rich-textarea div[contenteditable='true']",
       "div[contenteditable='true']",
+      "textarea",
     ],
     sendSelectors: [
       "button.send-button",
@@ -266,7 +264,7 @@ function automateChatInPage(cfg, promptText) {
     // ── 2. Snapshot existing response count BEFORE sending ───────────────
     const existingBubbleCount = queryAll(cfg.responseSelectors).length;
 
-    // ── 3. Robust Multi-Engine Text Injection ────────────────────────────
+    // ── 3. Fill input with full event propagation ────────────────────────
     input.focus();
     input.dispatchEvent(new FocusEvent("focus", { bubbles: true, composed: true }));
     input.dispatchEvent(new FocusEvent("focusin", { bubbles: true, composed: true }));
@@ -274,7 +272,8 @@ function automateChatInPage(cfg, promptText) {
     // A. Textarea / Input element (ChatGPT / Perplexity / DeepSeek)
     if (input.tagName === "TEXTAREA" || input.tagName === "INPUT" || input.id === "prompt-textarea") {
       const setter = Object.getOwnPropertyDescriptor(
-        window.HTMLTextAreaElement.prototype, "value"
+        window.HTMLTextAreaElement.prototype,
+        "value"
       )?.set;
       if (setter) setter.call(input, promptText);
       else input.value = promptText;
@@ -376,7 +375,7 @@ function automateChatInPage(cfg, promptText) {
         else {
           reject(
             new Error(
-              `${cfg.label} timed out. Make sure you are signed in and the session tab is accessible.`
+              `${cfg.label} timed out. Make sure you are signed in and the session is active.`
             )
           );
         }
@@ -538,18 +537,13 @@ function tryRenameConversation(cfg, title) {
   return false;
 }
 
-// ── Note Synthesis ───────────────────────────────────────────────────────────
+// ── Note Synthesis (Strictly in Background) ──────────────────────────────────
 
-async function getNotesViaWebSession(provider, rawContent, topicOverride, viewerTabId) {
+async function getNotesViaWebSession(provider, rawContent, topicOverride) {
   const cfg = PROVIDERS[provider];
   if (!cfg) throw new Error("Unknown provider: " + provider);
 
   const { tab, isNewChat } = await getOrCreateSessionTab(cfg);
-
-  // 150ms activation handshake to guarantee native selection & Angular/Quill event dispatching
-  if (viewerTabId) {
-    await chrome.tabs.update(tab.id, { active: true }).catch(() => {});
-  }
 
   const promptText = buildPrompt(rawContent, topicOverride);
   let result;
@@ -573,14 +567,6 @@ async function getNotesViaWebSession(provider, rawContent, topicOverride, viewer
   } catch (err) {
     throw new Error(`Automation failed on ${cfg.label}: ${err.message}`);
   } finally {
-    // Immediately return user to dashboard
-    if (viewerTabId) {
-      await chrome.tabs.update(viewerTabId, { active: true }).catch(() => {});
-      const win = await chrome.tabs.get(viewerTabId).catch(() => null);
-      if (win?.windowId) {
-        await chrome.windows.update(win.windowId, { focused: true }).catch(() => {});
-      }
-    }
     try {
       const finalTab = await chrome.tabs.get(tab.id);
       if (finalTab.url?.startsWith(cfg.hostPattern)) {
@@ -597,15 +583,11 @@ async function getNotesViaWebSession(provider, rawContent, topicOverride, viewer
 
 // ── Interactive Multi-AI Chat Handoff ────────────────────────────────────────
 
-async function sendChatMessageViaWebSession(provider, userMessage, contextHistory, viewerTabId) {
+async function sendChatMessageViaWebSession(provider, userMessage, contextHistory) {
   const cfg = PROVIDERS[provider];
   if (!cfg) throw new Error("Unknown provider: " + provider);
 
   const { tab, isNewChat } = await getOrCreateSessionTab(cfg);
-
-  if (viewerTabId) {
-    await chrome.tabs.update(tab.id, { active: true }).catch(() => {});
-  }
 
   let formattedPrompt = userMessage;
   if (contextHistory && contextHistory.trim()) {
@@ -633,13 +615,6 @@ async function sendChatMessageViaWebSession(provider, userMessage, contextHistor
   } catch (err) {
     throw new Error(`Chat failed on ${cfg.label}: ${err.message}`);
   } finally {
-    if (viewerTabId) {
-      await chrome.tabs.update(viewerTabId, { active: true }).catch(() => {});
-      const win = await chrome.tabs.get(viewerTabId).catch(() => null);
-      if (win?.windowId) {
-        await chrome.windows.update(win.windowId, { focused: true }).catch(() => {});
-      }
-    }
     try {
       const finalTab = await chrome.tabs.get(tab.id);
       if (finalTab.url?.startsWith(cfg.hostPattern)) {

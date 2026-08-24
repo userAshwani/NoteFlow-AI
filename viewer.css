@@ -1722,8 +1722,115 @@ body {
   display: none !important;
 }
 
-@keyframes spin {
+/* ── Skeleton & Logo Loading Animation ───────────────────────────────────── */
+
+.skeleton-card {
+  border-style: dashed !important;
+  border-color: var(--border-mid) !important;
+  background: #ffffff !important;
+  padding: 28px 32px !important;
+}
+
+.logo-loading-hero {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 20px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.logo-orbit-ring {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #ffffff;
+  padding: 3px;
+  flex: none;
+}
+
+.logo-orbit-ring::before {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, #2563eb, #38bdf8, #818cf8, #2563eb);
+  animation: rotateOrbit 2s linear infinite;
+  z-index: 1;
+}
+
+.logo-orbit-ring::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: #ffffff;
+  z-index: 2;
+}
+
+.logo-loading-avatar {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  position: relative;
+  z-index: 3;
+  animation: logoPulse 2s ease-in-out infinite;
+}
+
+@keyframes rotateOrbit {
   to { transform: rotate(360deg); }
+}
+
+@keyframes logoPulse {
+  0%, 100% { transform: scale(1); filter: brightness(1); }
+  50%      { transform: scale(1.06); filter: brightness(1.15); }
+}
+
+.logo-loading-text-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.logo-loading-title {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--text-main);
+  letter-spacing: -0.01em;
+}
+
+.logo-loading-sub {
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.shimmer-lines-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.shimmer-block {
+  display: block;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    #f1f5f9 0%,
+    #e2e8f0 50%,
+    #f1f5f9 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmerFlow 1.6s ease-in-out infinite;
+}
+
+@keyframes shimmerFlow {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }
 
 @media (max-width: 900px) {
