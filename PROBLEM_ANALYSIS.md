@@ -138,7 +138,7 @@ Manifest V3 provides `chrome.offscreen.createDocument({ url: "offscreen.html", r
 
 ---
 
-## 8. Resolution Implemented (v6.1.0) — Off-Screen Popup Window + One-Time Focus Handshake
+## 8. Resolution Implemented (v6.2.0) — Brief Same-Window Focus Flash
 
 The stall was caused by automating a **separate background browser tab**
 (`active: false, pinned: true`) in the user's own window. Chromium
@@ -170,45 +170,60 @@ during live testing:
    authenticated session underneath it can break. This is a platform
    constraint, not something fixable in extension code.
 
-### Attempt 2 (v6.1.0, current): off-screen popup window
+### Attempt 2 (v6.1.0, reverted): off-screen popup window
 
-Reverted to a **real browser tab** (so cookies behave normally, exactly like
-today's manual chatgpt.com/gemini.google.com usage) — but instead of
-creating it in the user's own window (`chrome.tabs.create`), it's created as
-its own separate popup window parked at off-screen coordinates
-(`chrome.windows.create({ type: "popup", focused: false, left: -2400, top:
--2400, … })`). Nothing appears in the user's tab strip because it isn't in
-the user's window at all.
+Tried creating the AI tab as its own separate popup window parked at
+off-screen coordinates (`chrome.windows.create({ type: "popup", focused:
+false, left: -2400, top: -2400, … })`), so it would never appear in the
+user's own window/tab strip. This also failed live testing immediately:
 
-That still leaves the focus-dependent quirk from Section 2.A.1: Chromium
-ignores `execCommand()`/native selection APIs in a tab whose *window* has
-never genuinely held OS focus. Rather than the old "tab-activate/switch-back"
-handshake (which was 100% reliable but visibly flickered the tab strip
-because it happened inside the user's own window), `getOrCreateSessionTab()`
-now flashes real OS focus onto the **off-screen** popup window for ~400ms
-immediately after creating it, then hands focus straight back to whatever
-window the user was actually looking at. Because the popup is positioned
-off-screen, this focus flip produces no visible change on the user's screen
-at all. This only needs to happen once per session tab (right after
-creation) — subsequent prompts reuse the already-"unlocked" tab.
+> `Invalid value for bounds. Bounds must be at least 50% within visible
+> screen space.`
 
-- `services/webSessionBridge.js` → `getOrCreateSessionTab()` replaces the old
-  `chrome.tabs.create(...)` with `chrome.windows.create(...)`, plus the
-  one-time focus handshake described above. `automateChatInPage()` and
-  `tryRenameConversation()` are unchanged from the original tab-based design.
-- `background.js` and `viewer.js`/`viewer.html`/`viewer.css` needed no
-  changes for this — the AI session tab is fully self-contained inside
-  `webSessionBridge.js` again, same as the original architecture.
-- The existing shimmer skeleton card (Study Notes) and the "Synthesizing…"
-  spinner row (Chat Hub) remain the loading overlay — they already fully
-  hide the automation happening underneath and vanish automatically once
+Chrome hard-rejects window creation calls that are positioned mostly
+off-screen — this is a deliberate anti-abuse guard (a genuinely invisible
+window is a classic clickjacking/malware primitive), and there is no bounds
+configuration that both satisfies this constraint and keeps the window out
+of sight. "Park a window off-screen" is not achievable via `chrome.windows`
+at all, regardless of exact coordinates chosen.
+
+### Resolution (v6.2.0, current): brief same-window focus flash
+
+With both "make it invisible" approaches blocked by the platform, the
+implementation returned to the **original architecture** — a real, pinned,
+inactive background tab in the user's own window (`chrome.tabs.create({
+active: false, pinned: true })`) — and re-applied the one technique already
+proven 100% reliable in this project's own prior testing (Section 5, item 3):
+briefly give that tab real tab-strip focus, long enough for Chromium to
+unlock `execCommand()`/selection-API input binding and register the Send
+click, then immediately switch back to whichever tab the user was actually
+on. `webSessionBridge.js` → `withBriefTabFocus()` holds focus on the AI tab
+for ~700ms while the automation script starts running, then restores the
+previous tab — the automation (including the whole response-wait loop)
+keeps running in the background regardless of which tab is visually
+selected afterwards.
+
+This is an explicit, user-accepted trade-off, not an oversight: it causes a
+short (<1s) visible tab-strip flicker on every generation/chat message,
+in exchange for something Chrome will actually let an extension do. Both
+"zero-flicker" alternatives (iframe, off-screen window) are platform-blocked
+for reasons discovered only through live testing, not fixable in code.
+
+- `services/webSessionBridge.js` → `getOrCreateSessionTab()` is back to
+  `chrome.tabs.create(...)` (same-window, pinned, inactive). A new
+  `withBriefTabFocus()` helper wraps the `automateChatInPage()` injection
+  with the focus flash described above. `automateChatInPage()` and
+  `tryRenameConversation()` are unchanged.
+- `background.js` and `viewer.js`/`viewer.html`/`viewer.css` need no changes
+  for this — the AI session tab is fully self-contained inside
+  `webSessionBridge.js`, matching the pre-existing architecture.
+- The existing shimmer skeleton card (Study Notes) and "Synthesizing…"
+  spinner row (Chat Hub) remain the loading overlay — they hide the
+  automation happening underneath and vanish automatically once
   `chrome.storage.local` is updated with the finished note/response, driven
   by `chrome.storage.onChanged`.
 
-**Trade-off:** the ~400ms native-focus flash, while imperceptible on-screen
-(the window is off-screen), does briefly move real OS keyboard focus away
-from whatever window the user is typing into. This is a smaller and shorter
-disruption than the rejected same-window tab-switch, but isn't provably zero
-— it needs live verification in Chrome with real logged-in sessions, which
-this environment cannot perform.
+**Still needs live verification** in Chrome with real logged-in sessions —
+this environment cannot run a browser to confirm the flash duration is
+sufficient in practice, or that no further edge case surfaces.
 

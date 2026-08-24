@@ -1,12 +1,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// background.js — NoteFlow AI Service Worker  v6.1
+// background.js — NoteFlow AI Service Worker  v6.2
 //
 // Pipeline phases:
 //  [1] Extract page content from the active tab.
 //  [2] Open viewer + write skeleton note -> instant shimmer on dashboard.
-//  [3] AI session runs in a real tab inside its own off-screen popup window
-//      (see services/webSessionBridge.js) — never in the user's own window
-//      or tab strip, so there is nothing to see or accidentally click into.
+//  [3] AI session runs in a pinned background tab in the same window (see
+//      services/webSessionBridge.js). It gets a brief (<1s) real tab-strip
+//      focus flash to unlock Chromium's focus-gated input APIs, then focus
+//      returns to whatever tab the user was on while generation continues.
 //  [4] Skeleton replaced by real note card with smooth fade-in animation.
 // ─────────────────────────────────────────────────────────────────────────────
 

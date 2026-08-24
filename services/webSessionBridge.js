@@ -1,20 +1,24 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// services/webSessionBridge.js  v6.1
+// services/webSessionBridge.js  v6.2
 //
-// Truly Silent Background AI Engine:
-//  • Iframe embedding was tried and rejected (v6.0): stripping X-Frame-Options
-//    lets the page LOAD, but Chromium still treats a cross-site iframe as a
-//    third-party context — the AI site's own auth cookies get partitioned out,
-//    so ChatGPT/Gemini's internal session calls 403 even though the DOM shows.
-//    Real, reliable session cookies require an actual top-level navigation.
-//  • So the AI session runs in a real tab — but inside its own separate popup
-//    window parked off-screen (negative coordinates), never in the user's
-//    current window/tab strip. Nothing to see, nothing to click into.
-//  • Chromium disables execCommand()/selection APIs in a tab that has never
-//    received genuine OS window focus. We flash real focus onto that
-//    off-screen window for a few hundred ms right after creating it, then
-//    immediately hand focus back to whatever window the user is actually
-//    looking at — invisible on screen since the window itself is off-screen.
+// Background AI Engine:
+//  • Two "invisible" approaches were tried and both hit hard platform walls:
+//      - In-tab iframe (v6.0): breaks the AI site's own session cookies —
+//        Chromium treats a cross-site iframe as third-party storage, so
+//        ChatGPT/Gemini's internal session-sync calls start 403ing.
+//      - Off-screen popup window (v6.1): Chrome outright refuses to create a
+//        window positioned mostly off-screen ("bounds must be at least 50%
+//        within visible screen space") — there is no way to make a real
+//        window invisible this way.
+//  • So the AI tab lives back in the user's own window, pinned & inactive —
+//    but Chromium ignores execCommand()/selection APIs in a tab whose window
+//    has never genuinely held OS focus, which is what disables the Send
+//    button until the user manually clicks into that tab. The fix proven
+//    reliable in earlier testing (see PROBLEM_ANALYSIS.md §5.3): flash real
+//    tab-strip focus onto the AI tab just long enough to fill the input and
+//    click Send, then immediately switch back to whatever tab the user was
+//    actually on. This causes a brief (sub-second) visible tab flicker —
+//    an explicit, accepted trade-off for reliability, not a bug.
 //  • Deep Angular/Quill (Gemini), Slate (ChatGPT), ProseMirror (Claude) DOM injection.
 //  • Anti-throttling & unthrottled MessageChannel observation loop.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -472,13 +476,13 @@ function normalizeNotes(parsed) {
   };
 }
 
-// ── Off-screen session window management ─────────────────────────────────────
+// ── Session tab management ────────────────────────────────────────────────────
 
 function waitForTabComplete(tabId, timeoutMs = 30000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       chrome.tabs.onUpdated.removeListener(listener);
-      reject(new Error("Timed out waiting for the AI session tab to load."));
+      reject(new Error("Timed out waiting for the AI tab to load."));
     }, timeoutMs);
     function listener(id, info) {
       if (id === tabId && info.status === "complete") {
@@ -498,9 +502,6 @@ function waitForTabComplete(tabId, timeoutMs = 30000) {
   });
 }
 
-// Gets (or creates) the real browser tab that hosts a given AI provider's
-// session, living in its own off-screen popup window so it never shows up
-// in the user's current window/tab strip.
 async function getOrCreateSessionTab(cfg) {
   const stored = await chrome.storage.local.get(cfg.sessionStorageKey);
   const savedUrl = stored[cfg.sessionStorageKey];
@@ -508,59 +509,52 @@ async function getOrCreateSessionTab(cfg) {
   if (savedUrl) {
     const openTabs = await chrome.tabs.query({ url: `${savedUrl}*` });
     if (openTabs.length > 0) {
+      await chrome.tabs.update(openTabs[0].id, { autoDiscardable: false }).catch(() => {});
       return { tab: openTabs[0], isNewChat: false };
     }
-  }
 
-  // Remember whichever window the user is actually looking at so we can
-  // hand focus straight back to it after the handshake below.
-  const activeWindow = await chrome.windows.getLastFocused({ windowTypes: ["normal"] }).catch(() => null);
-
-  const win = await chrome.windows.create({
-    url: savedUrl || cfg.baseUrl,
-    type: "popup",
-    focused: false,
-    left: -2400,
-    top: -2400,
-    width: 900,
-    height: 720,
-  });
-
-  const tab = win?.tabs?.[0];
-  if (!tab) throw new Error(`Could not open a silent session window for ${cfg.label}.`);
-
-  await waitForTabComplete(tab.id);
-  await new Promise((r) => setTimeout(r, 1000));
-
-  let reopened = await chrome.tabs.get(tab.id);
-  let isNewChat = !savedUrl;
-
-  if (savedUrl && !reopened.url?.startsWith(cfg.hostPattern)) {
-    // Saved deep-link didn't resolve (expired/invalid) — fall back to a fresh chat.
-    await chrome.tabs.update(tab.id, { url: cfg.baseUrl });
-    await waitForTabComplete(tab.id);
-    await new Promise((r) => setTimeout(r, 1000));
-    reopened = await chrome.tabs.get(tab.id);
-    isNewChat = true;
-  }
-
-  // One-time native-focus handshake: Chromium ignores execCommand()/selection
-  // APIs in a tab whose window has never genuinely held OS focus. Flash real
-  // focus onto this off-screen window just long enough to unlock that, then
-  // return focus to the user's own window immediately — since this window is
-  // parked off-screen, none of it is visible or disruptive.
-  try {
-    await chrome.windows.update(win.id, { focused: true });
-    await new Promise((r) => setTimeout(r, 400));
-  } catch {
-    /* non-fatal */
-  } finally {
-    if (activeWindow?.id) {
-      await chrome.windows.update(activeWindow.id, { focused: true }).catch(() => {});
+    try {
+      const tab = await chrome.tabs.create({ url: savedUrl, active: false, pinned: true });
+      await chrome.tabs.update(tab.id, { autoDiscardable: false }).catch(() => {});
+      await waitForTabComplete(tab.id);
+      await new Promise((r) => setTimeout(r, 1000));
+      const reopened = await chrome.tabs.get(tab.id);
+      if (reopened.url?.startsWith(cfg.hostPattern)) return { tab: reopened, isNewChat: false };
+      await chrome.tabs.update(tab.id, { url: cfg.baseUrl });
+      await waitForTabComplete(tab.id);
+      await new Promise((r) => setTimeout(r, 1000));
+      return { tab: await chrome.tabs.get(tab.id), isNewChat: true };
+    } catch {
+      /* fall through */
     }
   }
 
-  return { tab: reopened, isNewChat };
+  const tab = await chrome.tabs.create({ url: cfg.baseUrl, active: false, pinned: true });
+  await chrome.tabs.update(tab.id, { autoDiscardable: false }).catch(() => {});
+  await waitForTabComplete(tab.id);
+  await new Promise((r) => setTimeout(r, 1000));
+  return { tab, isNewChat: true };
+}
+
+// Chromium ignores execCommand()/native selection APIs in a tab whose window
+// has never genuinely held OS focus — this is what leaves Gemini/ChatGPT's
+// Send button permanently aria-disabled in a background tab. Flash real
+// tab-strip focus onto the AI tab just long enough to fill the input and
+// click Send, then immediately switch back to whichever tab the user was
+// actually on. `func` runs while the AI tab is focused; automation keeps
+// running in the background afterwards regardless of which tab is selected.
+async function withBriefTabFocus(tab, func) {
+  const [previousActive] = await chrome.tabs.query({ active: true, lastFocusedWindow: true }).catch(() => []);
+
+  await chrome.tabs.update(tab.id, { active: true }).catch(() => {});
+  const resultPromise = func();
+
+  await new Promise((r) => setTimeout(r, 700));
+  if (previousActive?.id && previousActive.id !== tab.id) {
+    await chrome.tabs.update(previousActive.id, { active: true }).catch(() => {});
+  }
+
+  return resultPromise;
 }
 
 function tryRenameConversation(cfg, title) {
@@ -591,12 +585,14 @@ async function getNotesViaWebSession(provider, rawContent, topicOverride) {
   const promptText = buildPrompt(rawContent, topicOverride);
   let result;
   try {
-    const res = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: automateChatInPage,
-      args: [cfg, promptText],
+    result = await withBriefTabFocus(tab, async () => {
+      const res = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: automateChatInPage,
+        args: [cfg, promptText],
+      });
+      return res[0]?.result;
     });
-    result = res[0]?.result;
 
     if (isNewChat) {
       await chrome.scripting
@@ -639,12 +635,14 @@ async function sendChatMessageViaWebSession(provider, userMessage, contextHistor
 
   let result;
   try {
-    const res = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: automateChatInPage,
-      args: [cfg, formattedPrompt],
+    result = await withBriefTabFocus(tab, async () => {
+      const res = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: automateChatInPage,
+        args: [cfg, formattedPrompt],
+      });
+      return res[0]?.result;
     });
-    result = res[0]?.result;
 
     if (isNewChat) {
       await chrome.scripting
