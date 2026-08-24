@@ -1,12 +1,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// services/webSessionBridge.js  v5.1
+// services/webSessionBridge.js  v5.2
 //
-// v5.1 key fix:
-//  • automateChatInPage now captures `existingBubbleCount` BEFORE sending the
-//    prompt and only watches for bubbles that appear AFTER that count. This
-//    prevents the observer from immediately picking up the previous response
-//    when multiple scans run on the same conversation thread — which caused
-//    "No response text scraped" errors on the 2nd/3rd scan.
+// Solves background tab throttling & streaming pauses:
+//  1. Overrides document.visibilityState ('visible') and document.hidden (false)
+//     so React / ChatGPT / Gemini do not pause DOM streaming in background tabs.
+//  2. Dispatches synthetic pointer/mouse/focus events and triggers full React
+//     input change cycles so send buttons enable and click immediately.
+//  3. Uses an unthrottled MessageChannel microtask loop (which bypasses Chrome's
+//     background tab timer throttling) to detect response completion instantly.
+//  4. Prevents tab discard/freezing with autoDiscardable: false.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const PROVIDERS = {
@@ -58,6 +60,7 @@ const PROVIDERS = {
       "button[data-testid='send-button']",
       "button[aria-label='Send prompt']",
       "button[aria-label*='Send' i]",
+      "button[aria-label='Submit']",
     ],
     stopSelectors: [
       "button[data-testid='stop-button']",
@@ -65,7 +68,6 @@ const PROVIDERS = {
       "button[aria-label*='Stop' i]",
     ],
     responseSelectors: [
-      // Ordered by specificity — try narrow selectors first
       "[data-message-author-role='assistant'] .markdown.prose",
       "[data-message-author-role='assistant'] .prose",
       "[data-message-author-role='assistant']",
@@ -201,13 +203,29 @@ function buildPrompt(rawContent, topicOverride) {
   return prompt;
 }
 
-// ── Page automation (injected into AI tab) ───────────────────────────────────
-// Self-contained — must not close over anything outside its own body.
-// Only `cfg` and `promptText` are passed as serialisable args.
-
+// ── Injected Automation Function ─────────────────────────────────────────────
+// Injected into the AI web page. Overrides tab visibility / background freeze.
 function automateChatInPage(cfg, promptText) {
   return (async () => {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    // ── 0. Anti-Throttling & Visibility Spoofing ─────────────────────────
+    // Many AI web apps pause token streaming / DOM rendering when document.hidden === true.
+    // We override visibility properties and dispatch focus events.
+    try {
+      Object.defineProperty(document, "hidden", { get: () => false, configurable: true });
+      Object.defineProperty(document, "visibilityState", { get: () => "visible", configurable: true });
+      Object.defineProperty(document, "webkitHidden", { get: () => false, configurable: true });
+      Object.defineProperty(document, "webkitVisibilityState", { get: () => "visible", configurable: true });
+      document.hasFocus = () => true;
+
+      window.dispatchEvent(new Event("focus"));
+      document.dispatchEvent(new Event("focus"));
+      window.dispatchEvent(new Event("visibilitychange"));
+      document.dispatchEvent(new Event("visibilitychange"));
+    } catch (e) {
+      /* non-fatal */
+    }
 
     function query(selectors) {
       for (const sel of selectors) {
@@ -227,64 +245,92 @@ function automateChatInPage(cfg, promptText) {
 
     // ── 1. Wait for input ────────────────────────────────────────────────
     let input = null;
-    const inputDeadline = Date.now() + 20000;
+    const inputDeadline = Date.now() + 25000;
     while (Date.now() < inputDeadline) {
       input = query(cfg.inputSelectors);
       if (input) break;
-      await sleep(300);
+      await sleep(250);
     }
     if (!input) {
       throw new Error(
-        `Could not find the chat input on ${cfg.label}. Make sure you are signed in and the page is fully loaded.`
+        `Could not find chat input on ${cfg.label}. Please ensure you are logged in and the page is loaded.`
       );
     }
 
     // ── 2. Snapshot existing response count BEFORE sending ───────────────
-    // This is the critical v5.1 fix: we only watch for bubbles that appear
-    // AFTER our prompt, preventing the observer from resolving immediately
-    // with the previous conversation's response.
     const existingBubbleCount = queryAll(cfg.responseSelectors).length;
 
-    // ── 3. Fill the input ────────────────────────────────────────────────
+    // ── 3. Fill input with full event propagation ────────────────────────
     input.focus();
-    if (input.tagName === "TEXTAREA") {
-      const setter = Object.getOwnPropertyDescriptor(
-        window.HTMLTextAreaElement.prototype, "value"
-      ).set;
-      setter.call(input, promptText);
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    } else {
-      document.execCommand("selectAll", false, null);
-      document.execCommand("insertText", false, promptText);
-      input.dispatchEvent(new InputEvent("input", { bubbles: true, data: promptText }));
-    }
-    await sleep(500);
+    input.dispatchEvent(new FocusEvent("focus", { bubbles: true }));
+    input.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
 
-    // ── 4. Send ──────────────────────────────────────────────────────────
-    const sendBtn = query(cfg.sendSelectors);
-    if (sendBtn && !sendBtn.disabled) {
-      sendBtn.click();
-    } else {
+    if (input.tagName === "TEXTAREA" || input.tagName === "INPUT") {
+      const setter = Object.getOwnPropertyDescriptor(
+        input.tagName === "TEXTAREA"
+          ? window.HTMLTextAreaElement.prototype
+          : window.HTMLInputElement.prototype,
+        "value"
+      )?.set;
+      if (setter) setter.call(input, promptText);
+      else input.value = promptText;
+
+      input.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
       input.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true,
+        new InputEvent("input", {
+          bubbles: true,
+          composed: true,
+          data: promptText,
+          inputType: "insertText",
         })
       );
+    } else {
+      // Contenteditable / ProseMirror (Claude / Gemini)
+      document.execCommand("selectAll", false, null);
+      document.execCommand("insertText", false, promptText);
+      input.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, data: promptText }));
     }
 
-    // ── 5. Wait for NEW response via MutationObserver ────────────────────
+    await sleep(400);
+
+    // ── 4. Wait for send button and trigger real click ───────────────────
+    let sendBtn = null;
+    const sendDeadline = Date.now() + 5000;
+    while (Date.now() < sendDeadline) {
+      sendBtn = query(cfg.sendSelectors);
+      if (sendBtn && !sendBtn.disabled && sendBtn.getAttribute("aria-disabled") !== "true") {
+        break;
+      }
+      await sleep(150);
+    }
+
+    if (sendBtn && !sendBtn.disabled && sendBtn.getAttribute("aria-disabled") !== "true") {
+      const mouseOpts = { bubbles: true, cancelable: true, view: window, buttons: 1 };
+      sendBtn.dispatchEvent(new PointerEvent("pointerdown", mouseOpts));
+      sendBtn.dispatchEvent(new MouseEvent("mousedown", mouseOpts));
+      sendBtn.dispatchEvent(new PointerEvent("pointerup", mouseOpts));
+      sendBtn.dispatchEvent(new MouseEvent("mouseup", mouseOpts));
+      sendBtn.click();
+    } else {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent("keypress", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true }));
+    }
+
+    // ── 5. Unthrottled Observation Loop ──────────────────────────────────
+    // MessageChannel port loop fires continuously on background tabs without setTimeout throttling.
     const responseText = await new Promise((resolve, reject) => {
       const TIMEOUT_MS = 120_000;
       let generationStarted = false;
       let lastText = "";
-      let debounceTimer = null;
+      let stableCount = 0;
       let done = false;
 
       function finish(text) {
         if (done) return;
         done = true;
         clearTimeout(hardTimeout);
-        clearTimeout(debounceTimer);
         mo.disconnect();
         resolve(text);
       }
@@ -293,56 +339,71 @@ function automateChatInPage(cfg, promptText) {
         if (done) return;
         done = true;
         mo.disconnect();
-        clearTimeout(debounceTimer);
-        // Grab whatever we have as a last resort.
         const bubbles = queryAll(cfg.responseSelectors);
         const newBubbles = Array.from(bubbles).slice(existingBubbleCount);
         const last = newBubbles[newBubbles.length - 1];
         const text = last?.innerText?.trim();
         if (text) resolve(text);
-        else reject(
-          new Error(
-            `${cfg.label} did not respond within 2 minutes. ` +
-            `Make sure you're signed in and the tab isn't blocked. ` +
-            `Try again — if the issue persists, the provider's selectors may have changed.`
-          )
-        );
+        else {
+          reject(
+            new Error(
+              `${cfg.label} timed out. Make sure you are signed in and the session tab is accessible.`
+            )
+          );
+        }
       }, TIMEOUT_MS);
 
       function check() {
         if (done) return;
+
+        // Keep waking visibility state in background
+        window.dispatchEvent(new Event("visibilitychange"));
+
         const stopEl = query(cfg.stopSelectors);
         if (stopEl) generationStarted = true;
 
         const bubbles = queryAll(cfg.responseSelectors);
-        // Only look at bubbles that appeared AFTER our prompt was sent.
         const newBubbles = Array.from(bubbles).slice(existingBubbleCount);
         if (!newBubbles.length) return;
 
         const last = newBubbles[newBubbles.length - 1];
         const text = last?.innerText?.trim() || "";
 
-        // Primary: stop indicator gone after it appeared + text present.
-        if (generationStarted && !stopEl && text) {
+        // Primary completion: Stop button disappeared after appearing, and we have non-empty text
+        if (generationStarted && !stopEl && text.length > 20) {
           finish(text);
           return;
         }
 
-        // Fallback: text stable for 3s (handles stale stop selectors).
-        if (text !== lastText) {
-          lastText = text;
-          clearTimeout(debounceTimer);
-          if (text) {
-            debounceTimer = setTimeout(() => {
-              if (!query(cfg.stopSelectors)) finish(text);
-            }, 3000);
+        // Secondary completion: JSON block complete or text stable for 5 checks
+        if (text && text === lastText && text.length > 30) {
+          stableCount++;
+          // If closing JSON brace is present and text hasn't changed
+          if (text.includes("}") && !stopEl && stableCount >= 4) {
+            finish(text);
+            return;
           }
+        } else {
+          lastText = text;
+          stableCount = 0;
         }
       }
 
       const mo = new MutationObserver(check);
-      mo.observe(document.body, { childList: true, subtree: true });
-      check(); // Immediate check.
+      mo.observe(document.body, { childList: true, subtree: true, characterData: true });
+
+      // Unthrottled tick loop via MessageChannel
+      const channel = new MessageChannel();
+      channel.port1.onmessage = () => {
+        if (done) return;
+        check();
+        setTimeout(() => {
+          if (!done) channel.port2.postMessage(null);
+        }, 300);
+      };
+      channel.port2.postMessage(null);
+
+      check();
     });
 
     if (!responseText) throw new Error(`No response received from ${cfg.label}.`);
@@ -362,7 +423,7 @@ function extractJson(rawText) {
     const start = text.indexOf("{");
     const end = text.lastIndexOf("}");
     if (start !== -1 && end > start) return JSON.parse(text.slice(start, end + 1));
-    throw new Error("Couldn't parse a JSON notes object from the AI reply. The model may have replied in an unexpected format — try again.");
+    throw new Error("Could not parse JSON response from the AI. Please try again.");
   }
 }
 
@@ -376,7 +437,7 @@ function normalizeNotes(parsed) {
   };
 }
 
-// ── Tab helpers ───────────────────────────────────────────────────────────────
+// ── Tab management ───────────────────────────────────────────────────────────
 
 async function waitForTabComplete(tabId, timeoutMs = 30000) {
   return new Promise((resolve, reject) => {
@@ -408,24 +469,32 @@ async function getOrCreateSessionTab(cfg) {
 
   if (savedUrl) {
     const openTabs = await chrome.tabs.query({ url: `${savedUrl}*` });
-    if (openTabs.length > 0) return { tab: openTabs[0], isNewChat: false };
+    if (openTabs.length > 0) {
+      // Prevent background tab discard
+      await chrome.tabs.update(openTabs[0].id, { autoDiscardable: false }).catch(() => {});
+      return { tab: openTabs[0], isNewChat: false };
+    }
 
     try {
       const tab = await chrome.tabs.create({ url: savedUrl, active: false, pinned: true });
+      await chrome.tabs.update(tab.id, { autoDiscardable: false }).catch(() => {});
       await waitForTabComplete(tab.id);
-      await new Promise((r) => setTimeout(r, 1500));
+      await new Promise((r) => setTimeout(r, 1200));
       const reopened = await chrome.tabs.get(tab.id);
       if (reopened.url?.startsWith(cfg.hostPattern)) return { tab: reopened, isNewChat: false };
       await chrome.tabs.update(tab.id, { url: cfg.baseUrl });
       await waitForTabComplete(tab.id);
-      await new Promise((r) => setTimeout(r, 1500));
+      await new Promise((r) => setTimeout(r, 1200));
       return { tab: await chrome.tabs.get(tab.id), isNewChat: true };
-    } catch { /* fall through */ }
+    } catch {
+      /* fall through */
+    }
   }
 
   const tab = await chrome.tabs.create({ url: cfg.baseUrl, active: false, pinned: true });
+  await chrome.tabs.update(tab.id, { autoDiscardable: false }).catch(() => {});
   await waitForTabComplete(tab.id);
-  await new Promise((r) => setTimeout(r, 1500));
+  await new Promise((r) => setTimeout(r, 1200));
   return { tab, isNewChat: true };
 }
 
@@ -440,11 +509,13 @@ function tryRenameConversation(cfg, title) {
       el.dispatchEvent(new Event("blur", { bubbles: true }));
       return true;
     }
-  } catch { /* non-fatal */ }
+  } catch {
+    /* non-fatal */
+  }
   return false;
 }
 
-// ── Main public function ──────────────────────────────────────────────────────
+// ── Main Entrypoint ──────────────────────────────────────────────────────────
 
 async function getNotesViaWebSession(provider, rawContent, topicOverride) {
   const cfg = PROVIDERS[provider];
@@ -464,7 +535,11 @@ async function getNotesViaWebSession(provider, rawContent, topicOverride) {
 
     if (isNewChat) {
       await chrome.scripting
-        .executeScript({ target: { tabId: tab.id }, func: tryRenameConversation, args: [cfg, SESSION_CHAT_TITLE] })
+        .executeScript({
+          target: { tabId: tab.id },
+          func: tryRenameConversation,
+          args: [cfg, SESSION_CHAT_TITLE],
+        })
         .catch(() => {});
     }
   } catch (err) {
@@ -475,10 +550,12 @@ async function getNotesViaWebSession(provider, rawContent, topicOverride) {
       if (finalTab.url?.startsWith(cfg.hostPattern)) {
         await chrome.storage.local.set({ [cfg.sessionStorageKey]: finalTab.url });
       }
-    } catch { /* non-fatal */ }
+    } catch {
+      /* non-fatal */
+    }
   }
 
-  if (!result) throw new Error(`No response captured from ${cfg.label}. Check that you're signed in and the provider's page loaded correctly.`);
+  if (!result) throw new Error(`No response captured from ${cfg.label}. Please make sure you are signed in.`);
   return normalizeNotes(extractJson(result));
 }
 
@@ -486,7 +563,9 @@ async function getNotesViaWebSession(provider, rawContent, topicOverride) {
 
 async function detectActiveProviders() {
   const candidates = Object.entries(PROVIDERS).map(([key, cfg]) => ({
-    key, label: cfg.label, domain: cfg.cookieDomain,
+    key,
+    label: cfg.label,
+    domain: cfg.cookieDomain,
   }));
   return Promise.all(
     candidates.map(async ({ key, label, domain }) => {

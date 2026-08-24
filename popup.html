@@ -9,40 +9,39 @@
 
   <!-- ── Brand Header ─────────────────────────────────────────────────────── -->
   <header class="app-header">
-    <span class="brand-logo">
-      <img id="brandLogoImg" class="brand-logo-img"
-        src="https://ashwanitiwari.com/logo.png" alt="" />
-      <svg id="brandLogoFallback" class="brand-logo-fallback hidden"
-        viewBox="0 0 36 36" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-        <rect width="36" height="36" rx="9" fill="url(#g1)" />
-        <defs>
-          <linearGradient id="g1" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stop-color="#2563eb"/>
-            <stop offset="100%" stop-color="#4f46e5"/>
-          </linearGradient>
-        </defs>
-        <text x="18" y="24" text-anchor="middle"
-          font-family="-apple-system,Segoe UI,sans-serif"
-          font-size="13" font-weight="800" fill="#fff">NF</text>
-      </svg>
-    </span>
-    <div class="header-text">
-      <span class="app-title">NoteFlow AI</span>
-      <span class="app-sub" id="headerSub">Smart Web Summarizer</span>
+    <div class="brand-group">
+      <span class="brand-logo">
+        <img id="brandLogoImg" class="brand-logo-img" src="https://ashwanitiwari.com/logo.png" alt="NF" />
+        <div id="brandLogoFallback" class="brand-logo-fallback hidden">NF</div>
+      </span>
+      <div class="header-text">
+        <div class="title-row">
+          <span class="app-title">NoteFlow AI</span>
+          <span class="version-badge">PRO</span>
+        </div>
+        <span class="app-sub" id="headerSub">Smart Web Summarizer</span>
+      </div>
     </div>
+
     <div class="header-stat">
-      <span class="stat-num" id="headerNoteCount">—</span>
-      <span class="stat-lbl">notes</span>
+      <span class="stat-num" id="headerNoteCount">0</span>
+      <span class="stat-lbl">Notes</span>
     </div>
   </header>
 
-  <!-- ── Main ─────────────────────────────────────────────────────────────── -->
-  <main>
+  <!-- ── Main Form ─────────────────────────────────────────────────────────── -->
+  <main class="popup-body">
 
-    <!-- Provider picker -->
-    <div class="field">
-      <label class="field-label">AI Provider</label>
-      <div class="select-wrap">
+    <!-- AI Model Selector -->
+    <div class="field-item">
+      <div class="field-label-row">
+        <label class="field-label">AI Engine</label>
+        <span id="sessionStatusBadge" class="session-badge active">
+          <span class="session-pulse"></span>
+          <span id="sessionChipText">Detecting…</span>
+        </span>
+      </div>
+      <div class="select-container">
         <select id="aiProvider">
           <option value="gemini-web">Gemini Web</option>
           <option value="chatgpt-web">ChatGPT Web</option>
@@ -51,60 +50,55 @@
           <option value="deepseek-web">DeepSeek Web</option>
         </select>
       </div>
-      <div id="sessionChip" class="session-chip detecting">
-        <span class="chip-dot"></span>
-        <span id="sessionChipText">Detecting sessions…</span>
-      </div>
     </div>
 
-    <!-- Topic override -->
-    <div class="field">
-      <label class="field-label">
-        Topic title
+    <!-- Optional Custom Title Override -->
+    <div class="field-item">
+      <div class="field-label-row">
+        <label class="field-label" for="topicOverride">Custom Topic Title</label>
         <span class="field-hint">optional</span>
-      </label>
-      <input type="text" id="topicOverride"
-        placeholder="Leave blank — AI decides" />
+      </div>
+      <input type="text" id="topicOverride" class="text-input" placeholder="Leave blank — AI will generate" autocomplete="off" />
     </div>
 
-    <!-- Primary action -->
-    <button id="scanBtn" class="scan-btn">
-      <svg class="scan-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+    <!-- Main Capture CTA -->
+    <button id="scanBtn" class="primary-capture-btn">
+      <svg class="capture-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="10" cy="10" r="3"/>
-        <path d="M10 1v3M10 16v3M1 10h3M16 10h3M3.22 3.22l2.12 2.12M14.66 14.66l2.12 2.12M16.78 3.22l-2.12 2.12M5.34 14.66l-2.12 2.12"/>
+        <path d="M10 2v3M10 15v3M2 10h3M15 10h3M4.34 4.34l2.12 2.12M13.54 13.54l2.12 2.12M15.66 4.34l-2.12 2.12M6.46 13.54l-2.12 2.12"/>
       </svg>
-      Capture Page Notes
+      <span>Capture Page Notes</span>
     </button>
 
-    <!-- Status -->
-    <div id="statusBadge" class="status-badge idle">Ready</div>
-    <div id="errorBox" class="error-box hidden"></div>
+    <!-- Real-time Status -->
+    <div id="statusBadge" class="process-badge idle">Ready</div>
+    <div id="errorBox" class="error-banner hidden"></div>
 
-    <div class="divider"></div>
+    <div class="divider-line"></div>
 
-    <!-- Secondary actions -->
-    <div class="action-row">
-      <button id="openViewerBtn" class="action-btn">
-        <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8">
-          <rect x="2" y="3" width="14" height="12" rx="2"/>
-          <path d="M6 7h6M6 10h4"/>
+    <!-- Secondary Links -->
+    <div class="actions-grid">
+      <button id="openViewerBtn" class="sub-action-btn">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="4" width="14" height="12" rx="2"/>
+          <path d="M7 8h6M7 12h4"/>
         </svg>
-        Dashboard
+        <span>Dashboard</span>
       </button>
-      <button id="clearNotesBtn" class="action-btn action-btn--warn">
-        <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8">
-          <path d="M3 5h12M8 5V3h2v2M7 8v5M11 8v5M4 5l1 10h8l1-10"/>
+      <button id="clearNotesBtn" class="sub-action-btn sub-action-btn--warn">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M4 6h12M8 6V4a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v2M5 6l1 11a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-11"/>
         </svg>
-        Clear All
+        <span>Clear Notes</span>
       </button>
     </div>
 
-    <!-- Confirm dialog -->
-    <div id="clearConfirm" class="confirm-box hidden">
-      <p class="confirm-text">Delete all notes? This can't be undone.</p>
-      <div class="confirm-row">
-        <button id="clearConfirmYes" class="confirm-yes">Delete all</button>
-        <button id="clearConfirmNo" class="confirm-no">Cancel</button>
+    <!-- Inline Confirm Box -->
+    <div id="clearConfirm" class="confirm-inline-box hidden">
+      <span class="confirm-msg">Delete all saved notes from dashboard?</span>
+      <div class="confirm-buttons-row">
+        <button id="clearConfirmYes" class="btn-clear-yes">Delete All</button>
+        <button id="clearConfirmNo" class="btn-clear-no">Cancel</button>
       </div>
     </div>
 

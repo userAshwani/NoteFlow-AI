@@ -1,46 +1,45 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// popup.js — NoteFlow AI  v5.1
+// popup.js — NoteFlow AI  v5.2
 // ─────────────────────────────────────────────────────────────────────────────
 
 const $ = (id) => document.getElementById(id);
 
-// ── Logo fallback ─────────────────────────────────────────────────────────────
+// ── Logo Fallback ────────────────────────────────────────────────────────────
 $("brandLogoImg").addEventListener("error", () => {
   $("brandLogoImg").classList.add("hidden");
   $("brandLogoFallback").classList.remove("hidden");
 });
 
-// ── Stage labels ──────────────────────────────────────────────────────────────
+// ── Stage Labels ─────────────────────────────────────────────────────────────
 const STAGE_LABELS = {
   idle:       "Ready",
   extracting: "[1/4] Reading page content…",
-  opening:    "[2/4] Opening your dashboard…",
+  opening:    "[2/4] Opening dashboard…",
   generating: "[3/4] AI is working in background…",
   appending:  "[4/4] Saving note…",
   success:    "✓ Note captured!",
   error:      "Something went wrong",
-  busy:       "⏳ Previous scan still running…",
+  busy:       "⏳ Previous capture in progress…",
 };
 
 function setStatus(stage) {
   const badge = $("statusBadge");
-  badge.className = `status-badge ${stage}`;
+  badge.className = `process-badge ${stage}`;
   badge.textContent = STAGE_LABELS[stage] || stage;
 }
 
-// ── Notes count stat ──────────────────────────────────────────────────────────
+// ── Notes Count Stat ─────────────────────────────────────────────────────────
 async function refreshHeaderStat() {
   const { notesList = [] } = await chrome.storage.local.get("notesList");
   const done = notesList.filter((n) => n.status === "done").length;
   $("headerNoteCount").textContent = done;
 }
 
-// Update the count whenever storage changes (e.g., after a scan completes).
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && changes.notesList) refreshHeaderStat();
 });
 
-// ── Provider detection ────────────────────────────────────────────────────────
+// ── Provider Detection ───────────────────────────────────────────────────────
 
 const PROVIDER_LABELS = {
   "gemini-web":     "Gemini",
@@ -51,13 +50,13 @@ const PROVIDER_LABELS = {
 };
 
 function setChip(state, text) {
-  const chip = $("sessionChip");
-  chip.className = `session-chip ${state}`;
+  const chip = $("sessionStatusBadge");
+  if (chip) chip.className = `session-badge ${state}`;
   $("sessionChipText").textContent = text;
 }
 
 async function detectAndPopulateProviders() {
-  setChip("detecting", "Detecting sessions…");
+  setChip("detecting", "Detecting…");
 
   const { selectedAIProvider = "gemini-web" } =
     await chrome.storage.local.get("selectedAIProvider");
@@ -65,13 +64,13 @@ async function detectAndPopulateProviders() {
 
   chrome.runtime.sendMessage({ type: "DETECT_PROVIDERS" }, (response) => {
     if (chrome.runtime.lastError || !response?.ok) {
-      setChip("inactive", "Sign in to a provider in Chrome to continue");
+      setChip("inactive", "Sign in required");
       return;
     }
 
     const providers = response.providers;
 
-    // Annotate options — put a ✓ prefix on actively-detected providers.
+    // Annotate dropdown options with ✓ for detected sessions
     Array.from($("aiProvider").options).forEach((opt) => {
       const match = providers.find((p) => p.key === opt.value);
       const label = PROVIDER_LABELS[opt.value] || opt.value;
@@ -80,7 +79,6 @@ async function detectAndPopulateProviders() {
 
     const activeCount = providers.filter((p) => p.active).length;
 
-    // If saved provider isn't active, switch to first active one.
     const savedActive = providers.find((p) => p.key === selectedAIProvider && p.active);
     if (!savedActive) {
       const first = providers.find((p) => p.active);
@@ -92,9 +90,9 @@ async function detectAndPopulateProviders() {
 
     const sel = providers.find((p) => p.key === $("aiProvider").value);
     if (activeCount === 0) {
-      setChip("inactive", "No sessions detected — sign in to a provider");
+      setChip("inactive", "No sessions detected");
     } else {
-      setChip("active", `● ${sel?.label ?? "Selected"} · browser session active`);
+      setChip("active", `${sel?.label ?? "AI"} Active`);
     }
   });
 }
@@ -103,10 +101,10 @@ $("aiProvider").addEventListener("change", async () => {
   const provider = $("aiProvider").value;
   await chrome.storage.local.set({ selectedAIProvider: provider });
   const label = PROVIDER_LABELS[provider] || provider;
-  setChip("active", `● ${label} · browser session active`);
+  setChip("active", `${label} Active`);
 });
 
-// ── Scan ──────────────────────────────────────────────────────────────────────
+// ── Capture Page Notes ───────────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg?.type === "PROGRESS") setStatus(msg.stage);
@@ -145,12 +143,12 @@ $("scanBtn").addEventListener("click", () => {
   });
 });
 
-// ── Dashboard ─────────────────────────────────────────────────────────────────
+// ── Open Dashboard ───────────────────────────────────────────────────────────
 $("openViewerBtn").addEventListener("click", () => {
   chrome.runtime.sendMessage({ type: "OPEN_VIEWER" });
 });
 
-// ── Clear All ─────────────────────────────────────────────────────────────────
+// ── Clear Notes ──────────────────────────────────────────────────────────────
 $("clearNotesBtn").addEventListener("click", () => {
   $("clearConfirm").classList.remove("hidden");
 });
@@ -167,6 +165,6 @@ $("clearConfirmYes").addEventListener("click", () => {
   });
 });
 
-// ── Boot ──────────────────────────────────────────────────────────────────────
+// ── Boot ─────────────────────────────────────────────────────────────────────
 detectAndPopulateProviders();
 refreshHeaderStat();
