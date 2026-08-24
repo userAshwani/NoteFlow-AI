@@ -73,6 +73,71 @@ $("themeBtn").addEventListener("click", async () => {
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
+// 0. SILENT AI SESSION FRAME HOST
+//
+// background.js no longer opens a separate browser tab for Gemini/ChatGPT/etc.
+// Instead it asks THIS page to load the AI provider into a hidden iframe that
+// lives right here in the dashboard tab. Because this tab stays active &
+// focused while the user watches their notes/chat generate, Chromium never
+// applies background-tab throttling to it — the iframe runs at full speed,
+// and the user only ever sees our own loading shimmer/spinner, never the
+// raw chat UI underneath.
+// ═════════════════════════════════════════════════════════════════════════════
+
+const _aiFrames = new Map(); // providerKey -> { el, ready, currentSrc }
+
+function ensureAiFrame(providerKey, url) {
+  return new Promise((resolve, reject) => {
+    let entry = _aiFrames.get(providerKey);
+
+    // Same provider, already loaded at this exact conversation URL — reuse
+    // as-is (SPA client-side routing means we can't detect its live URL by
+    // reading the iframe from here, so we trust our own load-tracking state).
+    if (entry?.ready && entry.currentSrc === url) {
+      resolve({ ok: true, reused: true });
+      return;
+    }
+
+    if (!entry) {
+      const frame = document.createElement("iframe");
+      frame.className = "ai-session-frame";
+      frame.dataset.provider = providerKey;
+      frame.tabIndex = -1;
+      frame.setAttribute("aria-hidden", "true");
+      $("aiSessionHost").appendChild(frame);
+      entry = { el: frame, ready: false, currentSrc: null };
+      _aiFrames.set(providerKey, entry);
+    }
+
+    entry.ready = false;
+    const timer = setTimeout(() => {
+      reject(new Error("Timed out loading the AI session frame."));
+    }, 30000);
+
+    entry.el.onload = () => {
+      clearTimeout(timer);
+      entry.ready = true;
+      entry.currentSrc = url;
+      resolve({ ok: true, reused: false });
+    };
+    entry.el.onerror = () => {
+      clearTimeout(timer);
+      reject(new Error("Failed to load the AI session frame."));
+    };
+    entry.el.src = url;
+  });
+}
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "ENSURE_AI_FRAME") {
+    ensureAiFrame(message.provider, message.url)
+      .then(sendResponse)
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
 // 1. WORKSPACE MODE SWITCHING (Notes vs Chat Hub)
 // ═════════════════════════════════════════════════════════════════════════════
 

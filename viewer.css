@@ -1833,6 +1833,30 @@ body {
   100% { background-position: -200% 0; }
 }
 
+/* ── Silent AI Session Frame Host ─────────────────────────────────────────
+   Kept inside the viewport (not display:none, not off-canvas) and layered
+   on top (z-index) so Chromium never treats it as an occluded/background
+   surface — it just stays visually imperceptible via near-zero opacity. */
+.ai-session-host {
+  position: fixed;
+  right: 4px;
+  bottom: 4px;
+  width: 360px;
+  height: 480px;
+  opacity: 0.01;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 2147483647;
+}
+
+.ai-session-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
 @media (max-width: 900px) {
   .app-container {
     grid-template-columns: 1fr;

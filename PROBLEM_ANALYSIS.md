@@ -135,3 +135,50 @@ Manifest V3 provides `chrome.offscreen.createDocument({ url: "offscreen.html", r
 - [ ] AI prompt is dispatched without switching the active tab or flickering the screen.
 - [ ] Notes complete and replace the skeleton card within 3-5 seconds.
 - [ ] Multi-AI Chat Hub allows interactive messaging with Cross-Model Context Handoff.
+
+---
+
+## 8. Resolution Implemented (v6.0.0) — In-Tab Hidden Iframe Host
+
+The stall was caused by automating a **separate background browser tab**
+(`active: false, pinned: true`). Chromium occlusion-throttles a tab like that
+the moment it isn't the foreground tab of its window — timers slow to
+~1/sec, rendering suspends, and Angular/React SPAs pause their own input
+binding on `document.hidden`. The "spoof `document.hidden`" and
+`MessageChannel` tricks (Section 5) only ever papered over this; the send
+button stayed `aria-disabled` until the user physically clicked into that
+tab, which is exactly the visible tab-jump the user rejected.
+
+**Fix:** stop creating a second tab entirely. The AI provider now loads in a
+hidden `<iframe class="ai-session-frame">` that lives **inside `viewer.html`
+itself** (see `viewer.js` → `ensureAiFrame()` / `#aiSessionHost`, styled in
+`viewer.css`). Because that iframe's parent tab is the dashboard tab the
+user is actively looking at, it is never occluded and never throttled —
+no spoofing needed.
+
+- `background.js` → `openOrFocusViewer()` now waits for the dashboard tab to
+  fully load, then passes its `tabId` down through the pipeline.
+- `services/webSessionBridge.js` → `getOrCreateSessionFrame()` messages
+  `viewer.js` (`ENSURE_AI_FRAME`) to create/reuse that hidden iframe instead
+  of `chrome.tabs.create()`. `automateChatInPage()` is unchanged in logic but
+  is now injected with `allFrames: true` into every frame of the dashboard
+  tab; a hostname guard at the top makes it a no-op everywhere except the one
+  iframe that actually matches the requested AI provider.
+- The existing shimmer skeleton card (Study Notes) and the "Synthesizing…"
+  spinner row (Chat Hub) are the loading overlay the user asked for — they
+  already fully hide the raw chat UI and vanish automatically the instant
+  `chrome.storage.local` is updated with the finished note/response, since
+  both views are driven by `chrome.storage.onChanged`.
+- `rules.json`'s header-stripping rules (Section 5, item 4) — previously
+  unused — are now load-bearing: they're what allow the AI sites to be
+  framed at all.
+
+**Trade-off:** this still assumes the dashboard tab stays the active/focused
+tab while generating (same assumption the original design already made —
+`openOrFocusViewer()` force-focuses it). If the user switches away to a
+different tab mid-generation, the dashboard tab itself would now be the one
+subject to occlusion throttling. Solving that fully would require the
+off-screen-window approach (Section 6, Option 1), which was not implemented
+here since it wasn't what was requested and needs live-session testing this
+environment can't perform.
+

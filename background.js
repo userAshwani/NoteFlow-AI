@@ -1,10 +1,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// background.js — NoteFlow AI Service Worker  v5.6
+// background.js — NoteFlow AI Service Worker  v6.0
 //
 // Pipeline phases:
 //  [1] Extract page content from the active tab.
 //  [2] Open viewer + write skeleton note -> instant shimmer on dashboard.
-//  [3] AI session runs completely silently in background (never steals focus).
+//  [3] AI session runs inside a hidden iframe living in the dashboard tab
+//      itself (see services/webSessionBridge.js + viewer.js) — no separate
+//      background browser tab is ever created, so there is nothing for the
+//      user to see or accidentally click into.
 //  [4] Skeleton replaced by real note card with smooth fade-in animation.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -68,6 +71,30 @@ async function markSkeletonFailed(id, errorMessage) {
 
 const VIEWER_PATH = "viewer.html";
 
+function waitForTabComplete(tabId, timeoutMs = 20000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(listener);
+      reject(new Error("Timed out waiting for the dashboard tab to load."));
+    }, timeoutMs);
+    function listener(id, info) {
+      if (id === tabId && info.status === "complete") {
+        clearTimeout(timer);
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve();
+      }
+    }
+    chrome.tabs.onUpdated.addListener(listener);
+    chrome.tabs.get(tabId, (tab) => {
+      if (tab?.status === "complete") {
+        clearTimeout(timer);
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve();
+      }
+    });
+  });
+}
+
 async function openOrFocusViewer() {
   const viewerUrl = chrome.runtime.getURL(VIEWER_PATH);
   const tabs = await chrome.tabs.query({ url: viewerUrl });
@@ -76,7 +103,11 @@ async function openOrFocusViewer() {
     await chrome.windows.update(tabs[0].windowId, { focused: true });
     return tabs[0];
   }
-  return chrome.tabs.create({ url: viewerUrl });
+  // Fresh tab: wait for viewer.js to actually finish loading and register its
+  // message listener before background.js tries to talk to it.
+  const tab = await chrome.tabs.create({ url: viewerUrl });
+  await waitForTabComplete(tab.id);
+  return tab;
 }
 
 // ── Main Note Generation Pipeline ─────────────────────────────────────────────
@@ -91,8 +122,8 @@ async function runPipeline(topicOverride, sendProgress) {
 
   sendProgress("opening");
   const noteId = `note_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  
-  await Promise.all([
+
+  const [viewerTab] = await Promise.all([
     openOrFocusViewer(),
     insertSkeletonNote(noteId, rawContent.url, provider, topicOverride || null),
   ]);
@@ -100,7 +131,7 @@ async function runPipeline(topicOverride, sendProgress) {
   sendProgress("generating");
   let notes;
   try {
-    notes = await self.WebSessionBridge.getNotesViaWebSession(provider, rawContent, topicOverride);
+    notes = await self.WebSessionBridge.getNotesViaWebSession(provider, rawContent, topicOverride, viewerTab.id);
   } catch (err) {
     await markSkeletonFailed(noteId, err.message);
     throw err;
@@ -143,11 +174,19 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   // ── SEND_CHAT_MESSAGE ─────────────────────────────────────────────────────
   if (message?.type === "SEND_CHAT_MESSAGE") {
     const { provider, prompt, contextHistory, isMultiModel, providersList } = message;
+    // The Multi-AI Chat Hub lives inside viewer.html itself, so the sender's
+    // own tab IS the dashboard tab that hosts the hidden AI session frames.
+    const viewerTabId = _sender?.tab?.id;
+
+    if (!viewerTabId) {
+      sendResponse({ ok: false, error: "Chat must be sent from the NoteFlow dashboard tab." });
+      return true;
+    }
 
     if (isMultiModel && Array.isArray(providersList) && providersList.length > 0) {
       Promise.allSettled(
         providersList.map(async (p) => {
-          const text = await self.WebSessionBridge.sendChatMessageViaWebSession(p, prompt, contextHistory);
+          const text = await self.WebSessionBridge.sendChatMessageViaWebSession(p, prompt, contextHistory, viewerTabId);
           return { provider: p, text };
         })
       )
@@ -165,7 +204,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     }
 
     // Single AI dispatch
-    self.WebSessionBridge.sendChatMessageViaWebSession(provider, prompt, contextHistory)
+    self.WebSessionBridge.sendChatMessageViaWebSession(provider, prompt, contextHistory, viewerTabId)
       .then((text) => sendResponse({ ok: true, text }))
       .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;
