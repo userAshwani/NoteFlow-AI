@@ -2,56 +2,106 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Ashwani Tiwari | Notes From AI</title>
+  <title>NoteFlow AI</title>
   <link rel="stylesheet" href="popup.css" />
 </head>
 <body>
+
+  <!-- ── Header ─────────────────────────────────────────────────────────── -->
   <header class="app-header">
     <span class="brand-logo">
-      <img id="brandLogoImg" class="brand-logo-img" src="https://ashwanitiwari.com/logo.png" alt="Ashwani Tiwari" />
-      <svg id="brandLogoFallback" class="brand-logo-fallback hidden" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-        <rect width="40" height="40" rx="10" fill="currentColor" />
-        <text x="20" y="26" text-anchor="middle" font-family="-apple-system, Segoe UI, Roboto, sans-serif" font-size="15" font-weight="700" fill="#fff">AT</text>
+      <img id="brandLogoImg" class="brand-logo-img"
+        src="https://ashwanitiwari.com/logo.png" alt="NoteFlow AI" />
+      <svg id="brandLogoFallback" class="brand-logo-fallback hidden"
+        viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <rect width="40" height="40" rx="10" fill="#2563eb" />
+        <text x="20" y="26" text-anchor="middle"
+          font-family="-apple-system, Segoe UI, Roboto, sans-serif"
+          font-size="14" font-weight="700" fill="#fff">NF</text>
       </svg>
     </span>
-    <span class="app-title">Ashwani Tiwari <span class="app-title-sep">|</span> Notes From AI</span>
+    <div class="header-text">
+      <span class="app-title">NoteFlow AI</span>
+      <span class="app-subtitle">Smart Web Summarizer</span>
+    </div>
+    <span class="version-chip">v5</span>
   </header>
 
+  <!-- ── Main ───────────────────────────────────────────────────────────── -->
   <main>
-    <label for="provider">AI Provider</label>
-    <select id="provider">
-      <option value="gemini-web">Gemini Web (Browser Session)</option>
-      <option value="chatgpt-web">ChatGPT Web (Browser Session)</option>
-    </select>
 
-    <div class="session-status" id="sessionStatus">
-      🔒 Logged-in browser session active — no API key needed. Make sure
-      you're signed in to this provider in Chrome.
+    <!-- Provider selector -->
+    <div class="field-group">
+      <label for="aiProvider">AI Provider</label>
+      <div class="select-wrapper">
+        <select id="aiProvider">
+          <option value="gemini-web">Gemini Web</option>
+          <option value="chatgpt-web">ChatGPT Web</option>
+          <option value="claude-web">Claude Web</option>
+          <option value="perplexity-web">Perplexity AI</option>
+          <option value="deepseek-web">DeepSeek Web</option>
+        </select>
+      </div>
+      <!-- Detection status chip -->
+      <div id="sessionChip" class="session-chip detecting">
+        <span class="chip-dot"></span>
+        <span id="sessionChipText">Detecting active sessions…</span>
+      </div>
     </div>
 
-    <label for="topicOverride">Topic title (optional)</label>
-    <input type="text" id="topicOverride" placeholder="Leave blank to let AI decide" />
+    <!-- Topic title override -->
+    <div class="field-group">
+      <label for="topicOverride">Topic Title <span class="label-hint">(optional)</span></label>
+      <input type="text" id="topicOverride" placeholder="Leave blank — AI will decide" />
+    </div>
 
-    <button id="scanBtn" class="primary-btn">Scan &amp; Add to Notes</button>
+    <!-- Primary action -->
+    <button id="scanBtn" class="primary-btn">
+      <svg class="btn-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+        <path d="M10 12a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/>
+        <path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 1 1-8 0 4 4 0 0 1 8 0z" clip-rule="evenodd"/>
+      </svg>
+      Scan &amp; Add to Notes
+    </button>
 
+    <!-- Status badge -->
     <div id="statusBadge" class="status-badge idle">Idle</div>
     <div id="errorBox" class="error-box hidden"></div>
 
     <hr />
 
-    <button id="openViewerBtn" class="secondary-btn">Open Notes Dashboard</button>
-    <button id="clearNotesBtn" class="danger-btn">Clear All Notes</button>
+    <!-- Secondary actions -->
+    <div class="action-row">
+      <button id="openViewerBtn" class="secondary-btn">
+        <svg class="btn-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+          <path d="M2 4a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V4zm2 0v12h12V4H4z"/>
+        </svg>
+        Open Dashboard
+      </button>
+      <button id="clearNotesBtn" class="clear-btn">
+        <svg class="btn-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+          <path fill-rule="evenodd" d="M9 2a1 1 0 0 0-.894.553L7.382 4H4a1 1 0 0 0 0 2v10a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V6a1 1 0 0 0 0-2h-3.382l-.724-1.447A1 1 0 0 0 11 2H9zM7 8a1 1 0 0 1 2 0v6a1 1 0 1 1-2 0V8zm4 0a1 1 0 0 1 2 0v6a1 1 0 1 1-2 0V8z" clip-rule="evenodd"/>
+        </svg>
+        Clear All
+      </button>
+    </div>
+
+    <!-- Inline confirm -->
     <div id="clearConfirm" class="clear-confirm hidden">
-      <span>Delete all saved notes? This can't be undone.</span>
-      <div class="clear-confirm-actions">
-        <button id="clearConfirmYes" class="danger-btn small">Yes, clear</button>
-        <button id="clearConfirmNo" class="secondary-btn small">Cancel</button>
+      <span class="confirm-text">⚠ Delete all saved notes? This cannot be undone.</span>
+      <div class="confirm-actions">
+        <button id="clearConfirmYes" class="confirm-yes-btn">Yes, clear all</button>
+        <button id="clearConfirmNo" class="confirm-no-btn">Cancel</button>
       </div>
     </div>
+
   </main>
 
+  <!-- ── Footer ─────────────────────────────────────────────────────────── -->
   <footer class="app-footer">
-    <span class="footer-badge">Developed by <a href="https://ashwanitiwari.com" target="_blank" rel="noopener">ashwanitiwari.com</a></span>
+    <span class="footer-badge">
+      Developed by <a href="https://ashwanitiwari.com" target="_blank" rel="noopener">ashwanitiwari.com</a>
+    </span>
   </footer>
 
   <script src="popup.js"></script>

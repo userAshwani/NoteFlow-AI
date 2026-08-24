@@ -1,12 +1,16 @@
 {
   "manifest_version": 3,
-  "name": "Ashwani Tiwari | Notes From AI",
-  "version": "4.0.0",
-  "description": "Extract webpage content and summarize it into structured study notes using your logged-in Gemini or ChatGPT web session — no API keys required. By ashwanitiwari.com.",
-  "permissions": ["activeTab", "scripting", "storage", "tabs"],
+  "name": "NoteFlow AI: Smart Web Summarizer",
+  "short_name": "NoteFlow AI",
+  "version": "5.0.0",
+  "description": "Silently extract & summarize any webpage into structured study notes via your logged-in Gemini, ChatGPT, Claude, Perplexity, or DeepSeek session — no API keys required. By ashwanitiwari.com.",
+  "permissions": ["activeTab", "scripting", "storage", "tabs", "cookies"],
   "host_permissions": [
     "https://gemini.google.com/*",
     "https://chatgpt.com/*",
+    "https://claude.ai/*",
+    "https://perplexity.ai/*",
+    "https://chat.deepseek.com/*",
     "<all_urls>"
   ],
   "background": {
@@ -24,5 +28,11 @@
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["viewer.html", "viewer.css", "viewer.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }
