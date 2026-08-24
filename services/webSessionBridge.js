@@ -1,14 +1,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// services/webSessionBridge.js  v5.2
+// services/webSessionBridge.js  v5.4
 //
-// Solves background tab throttling & streaming pauses:
-//  1. Overrides document.visibilityState ('visible') and document.hidden (false)
-//     so React / ChatGPT / Gemini do not pause DOM streaming in background tabs.
-//  2. Dispatches synthetic pointer/mouse/focus events and triggers full React
-//     input change cycles so send buttons enable and click immediately.
-//  3. Uses an unthrottled MessageChannel microtask loop (which bypasses Chrome's
-//     background tab timer throttling) to detect response completion instantly.
-//  4. Prevents tab discard/freezing with autoDiscardable: false.
+// Multi-AI Unified Engine:
+//  • Supports Note Synthesis (JSON extraction) & Interactive Chat Hub
+//  • Cross-Model Context Handoff: attaches prior discussion context when
+//    switching between models (Gemini -> ChatGPT -> Claude -> Perplexity -> DeepSeek)
+//  • Anti-Throttling & Visibility Spoofing for instant background streaming
+//  • Unthrottled MessageChannel observation loop
 // ─────────────────────────────────────────────────────────────────────────────
 
 const PROVIDERS = {
@@ -204,14 +202,11 @@ function buildPrompt(rawContent, topicOverride) {
 }
 
 // ── Injected Automation Function ─────────────────────────────────────────────
-// Injected into the AI web page. Overrides tab visibility / background freeze.
 function automateChatInPage(cfg, promptText) {
   return (async () => {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
     // ── 0. Anti-Throttling & Visibility Spoofing ─────────────────────────
-    // Many AI web apps pause token streaming / DOM rendering when document.hidden === true.
-    // We override visibility properties and dispatch focus events.
     try {
       Object.defineProperty(document, "hidden", { get: () => false, configurable: true });
       Object.defineProperty(document, "visibilityState", { get: () => "visible", configurable: true });
@@ -319,7 +314,6 @@ function automateChatInPage(cfg, promptText) {
     }
 
     // ── 5. Unthrottled Observation Loop ──────────────────────────────────
-    // MessageChannel port loop fires continuously on background tabs without setTimeout throttling.
     const responseText = await new Promise((resolve, reject) => {
       const TIMEOUT_MS = 120_000;
       let generationStarted = false;
@@ -356,7 +350,6 @@ function automateChatInPage(cfg, promptText) {
       function check() {
         if (done) return;
 
-        // Keep waking visibility state in background
         window.dispatchEvent(new Event("visibilitychange"));
 
         const stopEl = query(cfg.stopSelectors);
@@ -370,16 +363,15 @@ function automateChatInPage(cfg, promptText) {
         const text = last?.innerText?.trim() || "";
 
         // Primary completion: Stop button disappeared after appearing, and we have non-empty text
-        if (generationStarted && !stopEl && text.length > 20) {
+        if (generationStarted && !stopEl && text.length > 10) {
           finish(text);
           return;
         }
 
-        // Secondary completion: JSON block complete or text stable for 5 checks
-        if (text && text === lastText && text.length > 30) {
+        // Secondary completion: text stable for multiple checks
+        if (text && text === lastText && text.length > 20) {
           stableCount++;
-          // If closing JSON brace is present and text hasn't changed
-          if (text.includes("}") && !stopEl && stableCount >= 4) {
+          if (!stopEl && stableCount >= 4) {
             finish(text);
             return;
           }
@@ -392,7 +384,6 @@ function automateChatInPage(cfg, promptText) {
       const mo = new MutationObserver(check);
       mo.observe(document.body, { childList: true, subtree: true, characterData: true });
 
-      // Unthrottled tick loop via MessageChannel
       const channel = new MessageChannel();
       channel.port1.onmessage = () => {
         if (done) return;
@@ -470,7 +461,6 @@ async function getOrCreateSessionTab(cfg) {
   if (savedUrl) {
     const openTabs = await chrome.tabs.query({ url: `${savedUrl}*` });
     if (openTabs.length > 0) {
-      // Prevent background tab discard
       await chrome.tabs.update(openTabs[0].id, { autoDiscardable: false }).catch(() => {});
       return { tab: openTabs[0], isNewChat: false };
     }
@@ -515,7 +505,7 @@ function tryRenameConversation(cfg, title) {
   return false;
 }
 
-// ── Main Entrypoint ──────────────────────────────────────────────────────────
+// ── Note Synthesis ───────────────────────────────────────────────────────────
 
 async function getNotesViaWebSession(provider, rawContent, topicOverride) {
   const cfg = PROVIDERS[provider];
@@ -559,6 +549,54 @@ async function getNotesViaWebSession(provider, rawContent, topicOverride) {
   return normalizeNotes(extractJson(result));
 }
 
+// ── Interactive Multi-AI Chat Handoff ────────────────────────────────────────
+
+async function sendChatMessageViaWebSession(provider, userMessage, contextHistory) {
+  const cfg = PROVIDERS[provider];
+  if (!cfg) throw new Error("Unknown provider: " + provider);
+
+  const { tab, isNewChat } = await getOrCreateSessionTab(cfg);
+
+  let formattedPrompt = userMessage;
+  if (contextHistory && contextHistory.trim()) {
+    formattedPrompt = `[Context from prior conversation:\n${contextHistory.trim()}\n]\n\nUser Question: ${userMessage}`;
+  }
+
+  let result;
+  try {
+    const res = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: automateChatInPage,
+      args: [cfg, formattedPrompt],
+    });
+    result = res[0]?.result;
+
+    if (isNewChat) {
+      await chrome.scripting
+        .executeScript({
+          target: { tabId: tab.id },
+          func: tryRenameConversation,
+          args: [cfg, "NoteFlow AI — Chat Hub"],
+        })
+        .catch(() => {});
+    }
+  } catch (err) {
+    throw new Error(`Chat failed on ${cfg.label}: ${err.message}`);
+  } finally {
+    try {
+      const finalTab = await chrome.tabs.get(tab.id);
+      if (finalTab.url?.startsWith(cfg.hostPattern)) {
+        await chrome.storage.local.set({ [cfg.sessionStorageKey]: finalTab.url });
+      }
+    } catch {
+      /* non-fatal */
+    }
+  }
+
+  if (!result) throw new Error(`No response from ${cfg.label}.`);
+  return result;
+}
+
 // ── Provider detection ────────────────────────────────────────────────────────
 
 async function detectActiveProviders() {
@@ -579,4 +617,9 @@ async function detectActiveProviders() {
   );
 }
 
-self.WebSessionBridge = { getNotesViaWebSession, detectActiveProviders, PROVIDERS };
+self.WebSessionBridge = {
+  getNotesViaWebSession,
+  sendChatMessageViaWebSession,
+  detectActiveProviders,
+  PROVIDERS,
+};

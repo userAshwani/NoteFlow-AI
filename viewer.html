@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>NoteFlow AI — Smart Knowledge Dashboard</title>
+  <title>NoteFlow AI — Smart Knowledge & Chat Hub</title>
   <link rel="stylesheet" href="viewer.css" />
 </head>
 <body>
@@ -29,51 +29,73 @@
       </div>
     </div>
 
+    <!-- Workspace Mode Switcher Tabs -->
     <div class="topbar-center">
-      <div class="global-search-box">
-        <svg class="search-svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="8.5" cy="8.5" r="5.5"/>
-          <path d="M12.5 12.5L16.5 16.5"/>
-        </svg>
-        <input type="text" id="searchInput" class="search-input" placeholder="Search topics, summaries, code... (Press '/' to focus)" autocomplete="off" />
-        <button id="searchClear" class="search-clear-btn hidden" title="Clear search">✕</button>
-        <span class="search-kbd-hint">/</span>
-      </div>
+      <nav class="nav-workspace-tabs">
+        <button id="tabNotesBtn" class="nav-tab active" data-tab="notes">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 4h12v12H4z"/>
+            <path d="M7 8h6M7 12h4"/>
+          </svg>
+          <span>Study Notes</span>
+        </button>
+        <button id="tabChatBtn" class="nav-tab" data-tab="chat">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 10c0 3.866-3.582 7-8 7a8.841 8.841 0 01-4.083-.98L2 17l1.338-3.123C2.493 12.753 2 11.424 2 10c0-3.866 3.582-7 8-7s8 3.134 8 7z"/>
+          </svg>
+          <span>Multi-AI Chat Hub</span>
+        </button>
+      </nav>
     </div>
 
+    <!-- Topbar Actions -->
     <div class="topbar-actions">
-      <button id="flashcardBtn" class="action-pill action-pill--accent" title="Interactive Flashcard Study Mode">
-        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="3" y="4" width="14" height="12" rx="2.5"/>
-          <path d="M10 7v6M7 10h6"/>
-        </svg>
-        <span>Flashcards</span>
-      </button>
+      <!-- Notes Actions (visible in Notes tab) -->
+      <div id="notesToolbarActions" class="actions-group">
+        <button id="flashcardBtn" class="action-pill action-pill--accent" title="Interactive Flashcard Study Mode">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="4" width="14" height="12" rx="2.5"/>
+            <path d="M10 7v6M7 10h6"/>
+          </svg>
+          <span>Flashcards</span>
+        </button>
 
-      <button id="exportHtmlBtn" class="action-pill" title="Export as Standalone HTML">
-        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M10 3v10M6 9l4 4 4-4"/>
-          <path d="M4 16h12"/>
-        </svg>
-        <span>Export</span>
-      </button>
+        <button id="exportHtmlBtn" class="action-pill" title="Export as Standalone HTML">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M10 3v10M6 9l4 4 4-4"/>
+            <path d="M4 16h12"/>
+          </svg>
+          <span>Export</span>
+        </button>
 
-      <button id="copyAllBtn" class="action-pill" title="Copy Complete Document">
-        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="7" y="5" width="10" height="12" rx="2"/>
-          <path d="M4 14V4a1 1 0 0 1 1-1h9"/>
-        </svg>
-        <span>Copy All</span>
-      </button>
+        <button id="copyAllBtn" class="action-pill" title="Copy Complete Document">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="7" y="5" width="10" height="12" rx="2"/>
+            <path d="M4 14V4a1 1 0 0 1 1-1h9"/>
+          </svg>
+          <span>Copy All</span>
+        </button>
 
-      <button id="clearAllBtn" class="action-pill action-pill--danger" title="Clear All Saved Notes">
-        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M4 6h12M8 6V4a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v2M5 6l1 11a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-11"/>
-        </svg>
-        <span>Clear</span>
-      </button>
+        <button id="clearAllBtn" class="action-pill action-pill--danger" title="Clear All Saved Notes">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 6h12M8 6V4a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v2M5 6l1 11a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-11"/>
+          </svg>
+          <span>Clear</span>
+        </button>
+      </div>
 
-      <button id="themeBtn" class="action-pill action-pill--icon" title="Toggle Theme">
+      <!-- Chat Actions (visible in Chat tab) -->
+      <div id="chatToolbarActions" class="actions-group hidden">
+        <button id="clearChatBtn" class="action-pill action-pill--danger" title="Clear Chat History">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 6h12M8 6V4a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v2M5 6l1 11a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-11"/>
+          </svg>
+          <span>Clear Chat</span>
+        </button>
+      </div>
+
+      <!-- Theme Switcher -->
+      <button id="themeBtn" class="action-pill action-pill--icon" title="Toggle Dark/Light Theme">
         <svg id="themeIconDark" class="hidden" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="10" cy="10" r="4"/>
           <path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.34 4.34l1.42 1.42M14.24 14.24l1.42 1.42M15.66 4.34l-1.42 1.42M5.76 14.24l-1.42 1.42"/>
@@ -91,7 +113,7 @@
       <svg class="alert-icon" viewBox="0 0 20 20" fill="currentColor">
         <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
       </svg>
-      <span>Are you sure you want to delete all saved notes from this workspace?</span>
+      <span id="confirmBarText">Are you sure you want to delete all saved notes from this workspace?</span>
     </div>
     <div class="confirm-alert-buttons">
       <button id="ccYes" class="btn-confirm-delete">Delete Everything</button>
@@ -99,13 +121,13 @@
     </div>
   </div>
 
-  <!-- ── Main App Layout ──────────────────────────────────────────────────── -->
-  <div class="app-container">
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       VIEW 1: STUDY NOTES WORKSPACE
+       ═══════════════════════════════════════════════════════════════════════ -->
+  <div id="notesWorkspace" class="app-container">
 
-    <!-- ── Left Sidebar ───────────────────────────────────────────────────── -->
+    <!-- Left Sidebar -->
     <aside class="app-sidebar">
-      
-      <!-- Quick Stats Card -->
       <div class="stats-card">
         <div class="stat-col">
           <span class="stat-value" id="statNotes">0</span>
@@ -151,30 +173,38 @@
       </div>
     </aside>
 
-    <!-- ── Main Workspace Stream ─────────────────────────────────────────── -->
+    <!-- Main Workspace Stream -->
     <main class="app-main">
-
-      <!-- View Controls Bar -->
       <div class="stream-toolbar">
         <div class="stream-info">
           <h1 class="stream-title">Study Stream</h1>
           <span class="stream-subtitle" id="streamSubtitle">Chronological Knowledge Feed</span>
         </div>
 
-        <div class="stream-sort">
-          <label for="sortSelect" class="sort-label">Sort by:</label>
-          <div class="sort-select-wrapper">
-            <select id="sortSelect" class="sort-select">
-              <option value="newest">Newest First</option>
-              <option value="oldest">Oldest First</option>
-              <option value="alpha">Alphabetical (A-Z)</option>
-              <option value="pinned">Pinned to Top</option>
-            </select>
+        <div class="stream-right-tools">
+          <div class="global-search-box inline-search">
+            <svg class="search-svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="8.5" cy="8.5" r="5.5"/>
+              <path d="M12.5 12.5L16.5 16.5"/>
+            </svg>
+            <input type="text" id="searchInput" class="search-input" placeholder="Search topics, code... (/)" autocomplete="off" />
+            <button id="searchClear" class="search-clear-btn hidden" title="Clear search">✕</button>
+          </div>
+
+          <div class="stream-sort">
+            <label for="sortSelect" class="sort-label">Sort:</label>
+            <div class="sort-select-wrapper">
+              <select id="sortSelect" class="sort-select">
+                <option value="newest">Newest First</option>
+                <option value="oldest">Oldest First</option>
+                <option value="alpha">Alphabetical (A-Z)</option>
+                <option value="pinned">Pinned to Top</option>
+              </select>
+            </div>
           </div>
         </div>
       </div>
 
-      <!-- Search Matching Feedback -->
       <div id="searchHint" class="search-feedback-banner hidden"></div>
 
       <!-- Empty State -->
@@ -205,8 +235,101 @@
 
       <!-- Cards Container -->
       <div class="notes-stream" id="topicsRoot"></div>
-
     </main>
+
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       VIEW 2: MULTI-AI CHAT HUB WORKSPACE
+       ═══════════════════════════════════════════════════════════════════════ -->
+  <div id="chatWorkspace" class="chat-workspace-container hidden">
+
+    <!-- Chat Model Selector & Controls Bar -->
+    <div class="chat-controls-bar">
+      <div class="chat-model-pills" id="chatModelPills">
+        <button class="model-pill active" data-model="gemini-web">
+          <span class="model-dot pv-gemini"></span>
+          <span>Gemini</span>
+        </button>
+        <button class="model-pill" data-model="chatgpt-web">
+          <span class="model-dot pv-chatgpt"></span>
+          <span>ChatGPT</span>
+        </button>
+        <button class="model-pill" data-model="claude-web">
+          <span class="model-dot pv-claude"></span>
+          <span>Claude</span>
+        </button>
+        <button class="model-pill" data-model="perplexity-web">
+          <span class="model-dot pv-perplexity"></span>
+          <span>Perplexity</span>
+        </button>
+        <button class="model-pill" data-model="deepseek-web">
+          <span class="model-dot pv-deepseek"></span>
+          <span>DeepSeek</span>
+        </button>
+      </div>
+
+      <!-- Multi-Model Compare Switch -->
+      <div class="compare-mode-toggle">
+        <label class="toggle-switch-label" title="Send message to all active AI models simultaneously">
+          <input type="checkbox" id="compareModeCheck" />
+          <span class="toggle-slider"></span>
+          <span class="toggle-text">✨ Multi-AI Compare Mode</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Cross-Model Context Handoff Banner -->
+    <div class="context-handoff-banner" id="contextHandoffBanner">
+      <svg class="ch-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M10 4v12M4 10h12"/>
+      </svg>
+      <span id="contextHandoffText">
+        <strong>Cross-Model Context Active:</strong> When you switch AI models, NoteFlow will automatically brief the new model on your ongoing conversation.
+      </span>
+    </div>
+
+    <!-- Chat Messages Stream -->
+    <div class="chat-stream-viewport" id="chatStream">
+      <!-- Chat Welcome Empty State -->
+      <div class="chat-empty-state" id="chatEmptyState">
+        <div class="chat-empty-avatar">💬</div>
+        <h2>Multi-AI Conversational Workspace</h2>
+        <p>Chat directly with your active web AI models. Switch between Gemini, ChatGPT, Claude, and DeepSeek anytime with seamless context handoff, or compare their responses side-by-side.</p>
+        
+        <div class="chat-prompt-suggestions">
+          <button class="prompt-chip" data-prompt="Explain how event delegation works in JavaScript with an example.">
+            💡 Explain JavaScript Event Delegation
+          </button>
+          <button class="prompt-chip" data-prompt="Compare React useEffect vs useLayoutEffect in depth.">
+            ⚛️ Compare React Hooks
+          </button>
+          <button class="prompt-chip" data-prompt="What are the best architectural practices for Chrome Extensions MV3?">
+            🧩 Chrome Extensions MV3 Best Practices
+          </button>
+        </div>
+      </div>
+
+      <!-- Live Messages Stream Container -->
+      <div class="chat-messages-list" id="chatMessagesList"></div>
+    </div>
+
+    <!-- Chat Input Fixed Dock -->
+    <div class="chat-input-dock">
+      <div class="chat-input-box">
+        <textarea id="chatInputText" class="chat-textarea" placeholder="Type a message or question... (Enter to send, Shift+Enter for new line)" rows="1"></textarea>
+        <button id="chatSendBtn" class="chat-send-btn" title="Send Message">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path d="M3 10h14M11 4l6 6-6 6"/>
+          </svg>
+        </button>
+      </div>
+      <div class="chat-input-hints">
+        <span>Powered by active browser sessions</span>
+        <span>•</span>
+        <span>Press <kbd>Enter</kbd> to send</span>
+      </div>
+    </div>
 
   </div>
 
@@ -224,7 +347,6 @@
       </div>
 
       <div class="fc-viewport" id="fcCard">
-        <!-- Question Front -->
         <div class="fc-side fc-side-front" id="fcFront">
           <div class="fc-question-chip" id="fcQNum">TOPIC 1</div>
           <h2 class="fc-question-text" id="fcTitle">Topic Title</h2>
@@ -234,7 +356,6 @@
           </div>
         </div>
 
-        <!-- Answer Back -->
         <div class="fc-side fc-side-back hidden" id="fcBack">
           <div class="fc-answer-header">
             <span class="fc-answer-tag">EXPLANATION</span>
@@ -245,7 +366,6 @@
         </div>
       </div>
 
-      <!-- Bottom Controls -->
       <div class="fc-bottom-bar">
         <button class="fc-nav-btn" id="fcPrev" title="Previous (Left Arrow)">
           ← Previous

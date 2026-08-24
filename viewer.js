@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// viewer.js — NoteFlow AI Smart Knowledge Dashboard  v5.2
+// viewer.js — NoteFlow AI Unified Knowledge & Multi-AI Chat Dashboard  v5.4
 // ─────────────────────────────────────────────────────────────────────────────
 
 const $ = (id) => document.getElementById(id);
@@ -61,7 +61,6 @@ async function loadTheme() {
 
 function applyTheme(t) {
   document.documentElement.setAttribute("data-theme", t);
-  // In light mode show moon icon (to switch to dark), in dark mode show sun icon (to switch to light)
   $("themeIconDark").classList.toggle("hidden", t === "light");
   $("themeIconLight").classList.toggle("hidden", t === "dark");
 }
@@ -73,7 +72,41 @@ $("themeBtn").addEventListener("click", async () => {
   await chrome.storage.local.set({ theme: next });
 });
 
-// ── Pin Management ───────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+// 1. WORKSPACE MODE SWITCHING (Notes vs Chat Hub)
+// ═════════════════════════════════════════════════════════════════════════════
+
+let _currentTab = "notes"; // 'notes' | 'chat'
+
+function switchWorkspaceTab(tab) {
+  _currentTab = tab;
+  chrome.storage.local.set({ activeWorkspaceTab: tab });
+
+  const isNotes = tab === "notes";
+  $("tabNotesBtn").classList.toggle("active", isNotes);
+  $("tabChatBtn").classList.toggle("active", !isNotes);
+
+  $("notesWorkspace").classList.toggle("hidden", !isNotes);
+  $("chatWorkspace").classList.toggle("hidden", isNotes);
+
+  $("notesToolbarActions").classList.toggle("hidden", !isNotes);
+  $("chatToolbarActions").classList.toggle("hidden", isNotes);
+
+  if (!isNotes) {
+    setTimeout(() => {
+      $("chatInputText").focus();
+      scrollChatToBottom();
+    }, 50);
+  }
+}
+
+$("tabNotesBtn").addEventListener("click", () => switchWorkspaceTab("notes"));
+$("tabChatBtn").addEventListener("click", () => switchWorkspaceTab("chat"));
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 2. STUDY NOTES STREAM LOGIC
+// ═════════════════════════════════════════════════════════════════════════════
+
 async function getPinnedIds() {
   const { pinnedNoteIds = [] } = await chrome.storage.local.get("pinnedNoteIds");
   return pinnedNoteIds;
@@ -92,27 +125,31 @@ async function togglePin(noteId) {
   await chrome.storage.local.set({ pinnedNoteIds: ids });
 }
 
-// ── Search & Filter State ────────────────────────────────────────────────────
 let _searchText = "";
-let _activeFilter = "all"; // 'all' | 'pinned' | 'code'
+let _activeFilter = "all";
 let _sortMode = "newest";
 
 $("searchInput").addEventListener("input", (e) => {
   _searchText = e.target.value.toLowerCase().trim();
   $("searchClear").classList.toggle("hidden", !_searchText);
-  refreshDisplay();
+  refreshNotesDisplay();
 });
 
 $("searchClear").addEventListener("click", () => {
   $("searchInput").value = "";
   _searchText = "";
   $("searchClear").classList.add("hidden");
-  refreshDisplay();
+  refreshNotesDisplay();
 });
 
-// Global shortcut '/' to search
+// Global shortcut '/'
 document.addEventListener("keydown", (e) => {
-  if (e.key === "/" && document.activeElement !== $("searchInput") && !$("fcOverlay").classList.contains("hidden") === false) {
+  if (
+    e.key === "/" &&
+    _currentTab === "notes" &&
+    document.activeElement !== $("searchInput") &&
+    $("fcOverlay").classList.contains("hidden")
+  ) {
     if (document.activeElement.tagName !== "INPUT" && document.activeElement.tagName !== "TEXTAREA") {
       e.preventDefault();
       $("searchInput").focus();
@@ -129,20 +166,19 @@ document.querySelectorAll(".filter-chip").forEach((btn) => {
     document.querySelectorAll(".filter-chip").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
     _activeFilter = btn.dataset.filter;
-    refreshDisplay();
+    refreshNotesDisplay();
   });
 });
 
 $("sortSelect").addEventListener("change", (e) => {
   _sortMode = e.target.value;
   chrome.storage.local.set({ sortMode: _sortMode });
-  refreshDisplay();
+  refreshNotesDisplay();
 });
 
 function applyFilterAndSort(notes, pinnedIds) {
   let list = [...notes];
 
-  // 1. Text Search Filter
   if (_searchText) {
     list = list.filter((n) => {
       const corpus = [n.topicTitle, n.summary, ...(n.takeaways || []), n.code || ""].join(" ").toLowerCase();
@@ -150,18 +186,16 @@ function applyFilterAndSort(notes, pinnedIds) {
     });
   }
 
-  // 2. Chip Filter
   if (_activeFilter === "pinned") {
     list = list.filter((n) => pinnedIds.includes(n.id));
   } else if (_activeFilter === "code") {
     list = list.filter((n) => Boolean(n.code));
   }
 
-  // 3. Sort Mode
   function compareFn(a, b) {
     if (_sortMode === "oldest") return new Date(a.createdAt) - new Date(b.createdAt);
     if (_sortMode === "alpha") return (a.topicTitle || "").localeCompare(b.topicTitle || "");
-    return new Date(b.createdAt) - new Date(a.createdAt); // newest
+    return new Date(b.createdAt) - new Date(a.createdAt);
   }
 
   if (_sortMode === "pinned") {
@@ -173,9 +207,7 @@ function applyFilterAndSort(notes, pinnedIds) {
   return list.sort(compareFn);
 }
 
-// ── Delete with Undo ─────────────────────────────────────────────────────────
 let _deletedBackup = null;
-let _deleteUndoTimer = null;
 
 async function deleteNote(noteId) {
   const { notesList = [] } = await chrome.storage.local.get("notesList");
@@ -195,7 +227,6 @@ async function deleteNote(noteId) {
   });
 }
 
-// ── Copy Single Note ─────────────────────────────────────────────────────────
 async function copySingleNote(note) {
   let doc = `# ${note.topicTitle}\n\n${note.summary}\n`;
   if (note.takeaways?.length) {
@@ -211,8 +242,6 @@ async function copySingleNote(note) {
   showToast("📋 Markdown copied to clipboard");
 }
 
-// ── Build DOM Elements ───────────────────────────────────────────────────────
-
 function buildCardActions(note, pinnedIds) {
   const isPinned = pinnedIds.includes(note.id);
   const div = document.createElement("div");
@@ -220,6 +249,9 @@ function buildCardActions(note, pinnedIds) {
   div.innerHTML = `
     <button class="btn-card-action${isPinned ? " is-pinned" : ""}" data-action="pin" title="${isPinned ? "Unpin Note" : "Pin Note to Top"}">
       ${isPinned ? "📌" : "🔖"}
+    </button>
+    <button class="btn-card-action" data-action="ask" title="Discuss this note in Multi-AI Chat">
+      💬
     </button>
     <button class="btn-card-action" data-action="copy" title="Copy Note as Markdown">
       📋
@@ -236,6 +268,12 @@ function buildCardActions(note, pinnedIds) {
     if (act === "pin") await togglePin(note.id);
     if (act === "copy") await copySingleNote(note);
     if (act === "delete") await deleteNote(note.id);
+    if (act === "ask") {
+      switchWorkspaceTab("chat");
+      const prompt = `Can you explain more about this topic: "${note.topicTitle}"?\nSummary: ${note.summary}`;
+      $("chatInputText").value = prompt;
+      $("chatInputText").focus();
+    }
   });
 
   return div;
@@ -253,7 +291,6 @@ function buildNoteCard(note, doneIdx, pinnedIds) {
   el.dataset.noteId = note.id;
   el.setAttribute("data-anchor", anchorId);
 
-  // Card Header Top
   const header = document.createElement("div");
   header.className = "card-header";
 
@@ -271,7 +308,6 @@ function buildNoteCard(note, doneIdx, pinnedIds) {
   header.appendChild(buildCardActions(note, pinnedIds));
   el.appendChild(header);
 
-  // Meta Row
   const meta = document.createElement("div");
   meta.className = "card-meta-row";
   meta.innerHTML = `
@@ -291,7 +327,6 @@ function buildNoteCard(note, doneIdx, pinnedIds) {
   `;
   el.appendChild(meta);
 
-  // Summary
   if (note.summary) {
     const summary = document.createElement("div");
     summary.className = "card-summary";
@@ -299,7 +334,6 @@ function buildNoteCard(note, doneIdx, pinnedIds) {
     el.appendChild(summary);
   }
 
-  // Key Points
   if (note.takeaways?.length) {
     const sectionTitle = document.createElement("div");
     sectionTitle.className = "card-section-title";
@@ -321,7 +355,6 @@ function buildNoteCard(note, doneIdx, pinnedIds) {
     el.appendChild(list);
   }
 
-  // Code Block
   if (note.code) {
     const codeWrap = document.createElement("div");
     codeWrap.className = "code-container";
@@ -408,9 +441,7 @@ function buildErrorCard(note) {
   return el;
 }
 
-// ── Full Render ──────────────────────────────────────────────────────────────
-
-async function renderAll(notesList) {
+async function renderAllNotes(notesList) {
   const pinnedIds = await getPinnedIds();
   const root = $("topicsRoot");
   const emptyEl = $("emptyState");
@@ -433,7 +464,6 @@ async function renderAll(notesList) {
 
   emptyEl.classList.add("hidden");
 
-  // Render cards: Filtered Dones first, then generating skeletons, then errors
   let doneIdx = 0;
   filteredDone.forEach((note) => {
     root.appendChild(buildNoteCard(note, doneIdx++, pinnedIds));
@@ -453,14 +483,12 @@ async function renderAll(notesList) {
   updateHeaderCount(doneNotes.length, generatingNotes.length);
 }
 
-// ── Live Storage Sync ────────────────────────────────────────────────────────
-
 let _currentNotesList = [];
 
-async function syncToDOM(newList) {
+async function syncNotesToDOM(newList) {
   if (newList.length === 0) {
     _currentNotesList = [];
-    await renderAll([]);
+    await renderAllNotes([]);
     return;
   }
 
@@ -469,7 +497,6 @@ async function syncToDOM(newList) {
   const newMap = new Map(newList.map((n) => [n.id, n]));
   const root = $("topicsRoot");
 
-  // 1. New Skeletons / Notes
   for (const note of newList) {
     if (oldMap.has(note.id)) continue;
     $("emptyState").classList.add("hidden");
@@ -487,7 +514,6 @@ async function syncToDOM(newList) {
     }
   }
 
-  // 2. Status Transitions (generating -> done / error)
   for (const note of newList) {
     const old = oldMap.get(note.id);
     if (!old || old.status === note.status) continue;
@@ -507,7 +533,6 @@ async function syncToDOM(newList) {
     }
   }
 
-  // 3. Removed notes
   for (const note of _currentNotesList) {
     if (newMap.has(note.id)) continue;
     document.getElementById(cardIdFor(note.id))?.remove();
@@ -523,8 +548,6 @@ async function syncToDOM(newList) {
   updateStats(done.length, done.filter((n) => pinnedIdsF.includes(n.id)).length, getProviderSummary(done));
   updateTOC(applyFilterAndSort(done, pinnedIdsF), pinnedIdsF);
 }
-
-// ── Sidebar & Header Helpers ─────────────────────────────────────────────────
 
 function getProviderSummary(doneNotes) {
   const providers = [...new Set(doneNotes.map((n) => n.provider).filter(Boolean))];
@@ -585,32 +608,410 @@ function updateTOC(doneNotes, pinnedIds) {
     .join("");
 }
 
-async function refreshDisplay() {
+async function refreshNotesDisplay() {
   const { notesList = [] } = await chrome.storage.local.get("notesList");
   _currentNotesList = notesList;
-  await renderAll(notesList);
+  await renderAllNotes(notesList);
 }
 
-// ── Storage Watcher ──────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+// 3. MULTI-AI CHAT HUB LOGIC (Cross-Model Context Handoff & Compare Mode)
+// ═════════════════════════════════════════════════════════════════════════════
+
+let _selectedChatModel = "gemini-web";
+let _previousChatModel = null;
+let _chatMessages = []; // [{ id, sender: 'user'|'ai', model, text, timestamp, compareResults? }]
+let _isChatSending = false;
+let _detectedActiveProviders = [];
+
+// Check detected providers
+async function refreshChatProviders() {
+  chrome.runtime.sendMessage({ type: "DETECT_PROVIDERS" }, (response) => {
+    if (response?.ok && Array.isArray(response.providers)) {
+      _detectedActiveProviders = response.providers;
+      // Mark pills
+      document.querySelectorAll(".model-pill").forEach((pill) => {
+        const m = pill.dataset.model;
+        const found = response.providers.find((p) => p.key === m);
+        pill.title = found?.active ? `${pInfo(m).label} (Session Connected)` : `${pInfo(m).label} (Click to use)`;
+      });
+    }
+  });
+}
+
+function pInfo(modelKey) {
+  return PROVIDER_INFO[modelKey] || { label: modelKey, color: "var(--primary)" };
+}
+
+// Model Pill Selection
+document.querySelectorAll(".model-pill").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const nextModel = btn.dataset.model;
+    if (_selectedChatModel !== nextModel) {
+      _previousChatModel = _selectedChatModel;
+      _selectedChatModel = nextModel;
+      chrome.storage.local.set({ selectedChatModel: nextModel });
+
+      document.querySelectorAll(".model-pill").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+
+      // Update Context Handoff Banner Text
+      const prevName = pInfo(_previousChatModel).label;
+      const nextName = pInfo(nextModel).label;
+      $("contextHandoffBanner").classList.remove("hidden");
+      $("contextHandoffText").innerHTML = `
+        <strong>Context Handoff:</strong> Switched from ${escHtml(prevName)} to <strong>${escHtml(nextName)}</strong>. Your prior conversation context will be referenced automatically.
+      `;
+
+      showToast(`Switched to ${nextName} with Context Handoff`);
+    }
+  });
+});
+
+// Auto-expand Textarea
+$("chatInputText").addEventListener("input", function () {
+  this.style.height = "auto";
+  this.style.height = Math.min(this.scrollHeight, 140) + "px";
+});
+
+// Keydown send (Enter vs Shift+Enter)
+$("chatInputText").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    sendChatMessage();
+  }
+});
+
+$("chatSendBtn").addEventListener("click", sendChatMessage);
+
+// Suggestion Prompts
+document.querySelectorAll(".prompt-chip").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    $("chatInputText").value = btn.dataset.prompt;
+    $("chatInputText").focus();
+    sendChatMessage();
+  });
+});
+
+function scrollChatToBottom() {
+  const vp = $("chatStream");
+  vp.scrollTop = vp.scrollHeight;
+}
+
+// Build Context History String from recent turns
+function buildRecentContextSummary() {
+  if (!_chatMessages.length) return "";
+  // Take last 4-6 messages
+  const recent = _chatMessages.slice(-6);
+  return recent
+    .map((m) => {
+      if (m.sender === "user") return `User: ${m.text}`;
+      const name = pInfo(m.model).label;
+      return `${name}: ${m.text}`;
+    })
+    .join("\n");
+}
+
+function renderChatMessages() {
+  const container = $("chatMessagesList");
+  const emptyState = $("chatEmptyState");
+
+  if (!_chatMessages.length) {
+    emptyState.classList.remove("hidden");
+    container.innerHTML = "";
+    return;
+  }
+
+  emptyState.classList.add("hidden");
+  container.innerHTML = "";
+
+  _chatMessages.forEach((msg) => {
+    if (msg.sender === "user") {
+      const row = document.createElement("div");
+      row.className = "chat-row chat-row--user";
+      row.innerHTML = `
+        <div class="chat-bubble-user">
+          <div>${escHtml(msg.text)}</div>
+          <div class="meta-timestamp">${fmtDate(msg.timestamp)}</div>
+        </div>
+      `;
+      container.appendChild(row);
+    } else {
+      // AI message
+      const row = document.createElement("div");
+      row.className = "chat-row chat-row--ai";
+
+      if (msg.isCompare && Array.isArray(msg.compareResults)) {
+        // Multi-Model Compare Grid
+        const grid = document.createElement("div");
+        grid.className = "chat-compare-grid";
+
+        msg.compareResults.forEach((res) => {
+          const card = document.createElement("div");
+          card.className = `chat-card-ai pv-${res.provider}`;
+          const p = pInfo(res.provider);
+
+          card.innerHTML = `
+            <div class="chat-ai-header">
+              <span class="chat-ai-model-tag">
+                <span class="model-dot pv-${res.provider.replace("-web", "")}"></span>
+                ${escHtml(p.label)}
+              </span>
+              <div class="chat-ai-actions">
+                <button class="btn-chat-action btn-save-note" title="Save this response as a Study Note">
+                  📝 Save as Note
+                </button>
+                <button class="btn-chat-action btn-copy-chat" title="Copy Text">
+                  📋 Copy
+                </button>
+              </div>
+            </div>
+            <div class="chat-ai-body">${formatMarkdown(res.text || res.error || "No response")}</div>
+          `;
+
+          wireChatCardButtons(card, res.text, p.label, res.provider);
+          grid.appendChild(card);
+        });
+
+        row.appendChild(grid);
+      } else {
+        // Single Model Response
+        const card = document.createElement("div");
+        card.className = `chat-card-ai pv-${msg.model}`;
+        const p = pInfo(msg.model);
+
+        card.innerHTML = `
+          <div class="chat-ai-header">
+            <span class="chat-ai-model-tag">
+              <span class="model-dot pv-${msg.model.replace("-web", "")}"></span>
+              ${escHtml(p.label)}
+            </span>
+            <div class="chat-ai-actions">
+              <button class="btn-chat-action btn-save-note" title="Save this response as a Study Note">
+                📝 Save as Note
+              </button>
+              <button class="btn-chat-action btn-copy-chat" title="Copy Text">
+                📋 Copy
+              </button>
+            </div>
+          </div>
+          <div class="chat-ai-body">${formatMarkdown(msg.text)}</div>
+        `;
+
+        wireChatCardButtons(card, msg.text, p.label, msg.model);
+        row.appendChild(card);
+      }
+
+      container.appendChild(row);
+    }
+  });
+
+  scrollChatToBottom();
+}
+
+function wireChatCardButtons(cardEl, text, modelLabel, providerKey) {
+  cardEl.querySelector(".btn-copy-chat")?.addEventListener("click", async function () {
+    await navigator.clipboard.writeText(text);
+    this.textContent = "✓ Copied!";
+    setTimeout(() => { this.textContent = "📋 Copy"; }, 1800);
+    showToast("Chat response copied");
+  });
+
+  cardEl.querySelector(".btn-save-note")?.addEventListener("click", async function () {
+    const firstLine = text.trim().split("\n")[0].replace(/^#*\s*/, "").slice(0, 60);
+    const title = firstLine || `Insight from ${modelLabel}`;
+    const summary = text.slice(0, 180) + (text.length > 180 ? "…" : "");
+
+    chrome.runtime.sendMessage(
+      {
+        type: "SAVE_CHAT_TO_NOTE",
+        note: {
+          topicTitle: title,
+          summary: summary,
+          takeaways: [text.slice(0, 300)],
+          provider: providerKey,
+        },
+      },
+      (res) => {
+        if (res?.ok) {
+          this.textContent = "✓ Saved!";
+          showToast(`Saved to Study Notes (#${title})`);
+        }
+      }
+    );
+  });
+}
+
+function formatMarkdown(raw) {
+  if (!raw) return "";
+  let clean = escHtml(raw);
+
+  // Fenced Code Blocks
+  clean = clean.replace(/```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g, (match, lang, code) => {
+    return `<div class="code-container" style="margin: 10px 0;"><div class="code-header"><span class="code-lang-tag">${lang || "code"}</span></div><pre><code>${code.trim()}</code></pre></div>`;
+  });
+
+  // Inline Code
+  clean = clean.replace(/`([^`]+)`/g, "<code>$1</code>");
+
+  // Bold
+  clean = clean.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+
+  // Bullet items
+  clean = clean.replace(/^\s*[-*•]\s+(.*)$/gm, "<li>$1</li>");
+  clean = clean.replace(/(<li>.*<\/li>)/s, "<ul style='padding-left: 20px; margin: 8px 0;'>$1</ul>");
+
+  // Paragraphs
+  const paragraphs = clean
+    .split(/\n{2,}/)
+    .map((p) => (p.startsWith("<div") || p.startsWith("<ul") ? p : `<p>${p.replace(/\n/g, "<br/>")}</p>`));
+
+  return paragraphs.join("");
+}
+
+async function sendChatMessage() {
+  if (_isChatSending) return;
+  const inputEl = $("chatInputText");
+  const text = inputEl.value.trim();
+  if (!text) return;
+
+  _isChatSending = true;
+  $("chatSendBtn").disabled = true;
+  inputEl.value = "";
+  inputEl.style.height = "auto";
+
+  // 1. Append User Message
+  const userMsg = {
+    id: `msg_${Date.now()}`,
+    sender: "user",
+    text,
+    timestamp: new Date().toISOString(),
+  };
+  _chatMessages.push(userMsg);
+  renderChatMessages();
+
+  // 2. Render Temporary Generating Indicator
+  const container = $("chatMessagesList");
+  const genRow = document.createElement("div");
+  genRow.className = "chat-row chat-row--ai";
+  genRow.id = "chatGenRow";
+  const isCompare = $("compareModeCheck").checked;
+  const targetLabel = isCompare ? "All Active AI Models" : pInfo(_selectedChatModel).label;
+
+  genRow.innerHTML = `
+    <div class="chat-generating-card">
+      <span class="chat-spinner"></span>
+      <span class="chat-gen-text">Synthesizing with ${escHtml(targetLabel)} in background…</span>
+    </div>
+  `;
+  container.appendChild(genRow);
+  scrollChatToBottom();
+
+  const contextHistory = buildRecentContextSummary();
+
+  try {
+    if (isCompare) {
+      // Dispatch to active models or all models
+      const providersList = ["gemini-web", "chatgpt-web", "claude-web"];
+      const res = await new Promise((resolve) => {
+        chrome.runtime.sendMessage(
+          {
+            type: "SEND_CHAT_MESSAGE",
+            isMultiModel: true,
+            providersList,
+            prompt: text,
+            contextHistory,
+          },
+          resolve
+        );
+      });
+
+      $("chatGenRow")?.remove();
+
+      if (res?.ok && res.responses) {
+        _chatMessages.push({
+          id: `ai_${Date.now()}`,
+          sender: "ai",
+          isCompare: true,
+          compareResults: res.responses,
+          timestamp: new Date().toISOString(),
+        });
+      } else {
+        showToast("⚠ Failed to get responses from some models.");
+      }
+    } else {
+      // Single Model
+      const res = await new Promise((resolve) => {
+        chrome.runtime.sendMessage(
+          {
+            type: "SEND_CHAT_MESSAGE",
+            provider: _selectedChatModel,
+            prompt: text,
+            contextHistory,
+          },
+          resolve
+        );
+      });
+
+      $("chatGenRow")?.remove();
+
+      if (res?.ok && res.text) {
+        _chatMessages.push({
+          id: `ai_${Date.now()}`,
+          sender: "ai",
+          model: _selectedChatModel,
+          text: res.text,
+          timestamp: new Date().toISOString(),
+        });
+      } else {
+        _chatMessages.push({
+          id: `ai_${Date.now()}`,
+          sender: "ai",
+          model: _selectedChatModel,
+          text: `⚠ **Error:** ${res?.error || "Could not receive a response. Make sure you are logged in to " + pInfo(_selectedChatModel).label + "."}`,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    }
+
+    await chrome.storage.local.set({ chatMessages: _chatMessages });
+  } catch (err) {
+    $("chatGenRow")?.remove();
+    showToast("⚠ Chat request error: " + err.message);
+  } finally {
+    _isChatSending = false;
+    $("chatSendBtn").disabled = false;
+    renderChatMessages();
+  }
+}
+
+// Clear Chat Action
+$("clearChatBtn").addEventListener("click", () => {
+  $("confirmBarText").textContent = "Clear all messages in Multi-AI Chat?";
+  $("clearConfirmBar").classList.remove("hidden");
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 4. STORAGE LISTENERS & EXPORT ACTIONS
+// ═════════════════════════════════════════════════════════════════════════════
 
 chrome.storage.onChanged.addListener(async (changes, area) => {
   if (area !== "local") return;
 
   if (changes.notesList) {
     const after = changes.notesList.newValue || [];
-    await syncToDOM(after);
+    await syncNotesToDOM(after);
     _currentNotesList = after;
   }
 
   if (changes.pinnedNoteIds) {
-    await refreshDisplay();
+    await refreshNotesDisplay();
   }
 });
 
-// ── Toolbar Actions ──────────────────────────────────────────────────────────
-
-// Clear All
+// Clear All in Notes
 $("clearAllBtn").addEventListener("click", () => {
+  $("confirmBarText").textContent = "Delete all saved notes from this workspace?";
   $("clearConfirmBar").classList.remove("hidden");
 });
 
@@ -620,20 +1021,26 @@ $("ccNo").addEventListener("click", () => {
 
 $("ccYes").addEventListener("click", async () => {
   $("clearConfirmBar").classList.add("hidden");
-  await chrome.storage.local.set({ notesList: [], pinnedNoteIds: [] });
-  showToast("All notes cleared from workspace");
+  if (_currentTab === "chat") {
+    _chatMessages = [];
+    await chrome.storage.local.set({ chatMessages: [] });
+    renderChatMessages();
+    showToast("Chat conversation cleared");
+  } else {
+    await chrome.storage.local.set({ notesList: [], pinnedNoteIds: [] });
+    showToast("All notes cleared from workspace");
+  }
 });
 
 // Export HTML
 $("exportHtmlBtn").addEventListener("click", async () => {
   const { notesList = [] } = await chrome.storage.local.get("notesList");
   const pinnedIds = await getPinnedIds();
-  const theme = document.documentElement.getAttribute("data-theme") || "dark";
+  const theme = document.documentElement.getAttribute("data-theme") || "light";
   const done = notesList.filter((n) => n.status === "done");
 
   const styleResp = await fetch("viewer.css");
   const css = await styleResp.text();
-
   const body = done.map((n, i) => buildNoteCard(n, i, pinnedIds).outerHTML).join("");
 
   const doc = `<!DOCTYPE html>
@@ -692,7 +1099,9 @@ $("copyAllBtn").addEventListener("click", async () => {
   showToast("Complete workspace copied to clipboard");
 });
 
-// ── Interactive Flashcard Study Mode ─────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+// 5. FLASHCARD STUDY MODE
+// ═════════════════════════════════════════════════════════════════════════════
 
 let _fcCards = [];
 let _fcIdx = 0;
@@ -763,7 +1172,6 @@ $("fcNext").addEventListener("click", () => {
   }
 });
 
-// Flashcard Keyboard Nav
 document.addEventListener("keydown", (e) => {
   if ($("fcOverlay").classList.contains("hidden")) return;
   if (e.key === "ArrowLeft") {
@@ -818,18 +1226,40 @@ function showToastWithUndo(msg, undoFn) {
   }, 5000);
 }
 
-// ── Boot ─────────────────────────────────────────────────────────────────────
+// ── Boot Initializer ─────────────────────────────────────────────────────────
 
 async function init() {
   await loadTheme();
 
-  const { sortMode = "newest" } = await chrome.storage.local.get("sortMode");
+  const {
+    sortMode = "newest",
+    activeWorkspaceTab = "notes",
+    selectedChatModel = "gemini-web",
+    chatMessages = [],
+  } = await chrome.storage.local.get([
+    "sortMode",
+    "activeWorkspaceTab",
+    "selectedChatModel",
+    "chatMessages",
+  ]);
+
   _sortMode = sortMode;
   $("sortSelect").value = sortMode;
 
+  _selectedChatModel = selectedChatModel;
+  document.querySelectorAll(".model-pill").forEach((pill) => {
+    pill.classList.toggle("active", pill.dataset.model === selectedChatModel);
+  });
+
+  _chatMessages = Array.isArray(chatMessages) ? chatMessages : [];
+  renderChatMessages();
+  refreshChatProviders();
+
+  switchWorkspaceTab(activeWorkspaceTab);
+
   const { notesList = [] } = await chrome.storage.local.get("notesList");
   _currentNotesList = notesList;
-  await renderAll(notesList);
+  await renderAllNotes(notesList);
 }
 
 init();

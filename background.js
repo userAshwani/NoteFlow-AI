@@ -1,22 +1,20 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// background.js — NoteFlow AI Service Worker  v5.1
+// background.js — NoteFlow AI Service Worker  v5.4
 //
 // Pipeline phases:
 //  [1] Extract page content from the active tab.
-//  [2] Open viewer + write skeleton note → instant shimmer on dashboard.
+//  [2] Open viewer + write skeleton note -> instant shimmer on dashboard.
 //  [3] AI session runs silently (active:false tabs, never steals focus).
 //  [4] Skeleton replaced by real note card with fade-in animation.
 //
-// v5.1 changes:
-//  • Concurrency guard — only one scan runs at a time. Further clicks get a
-//    friendly "busy" response instead of stacking broken skeletons.
+// Multi-AI Chat Hub features:
+//  • SEND_CHAT_MESSAGE: Dispatches conversational queries with context handoff
+//  • SAVE_CHAT_TO_NOTE: Converts any chat answer directly into a structured note
 // ─────────────────────────────────────────────────────────────────────────────
 
 importScripts("services/webSessionBridge.js");
 
 // ── Concurrency guard ─────────────────────────────────────────────────────────
-// Service workers remain alive for the duration of an async operation, so this
-// flag persists correctly across multiple clicks within the same scan session.
 let _isScanning = false;
 
 // ── Content extraction ────────────────────────────────────────────────────────
@@ -85,7 +83,7 @@ async function openOrFocusViewer() {
   return chrome.tabs.create({ url: viewerUrl });
 }
 
-// ── Main pipeline ─────────────────────────────────────────────────────────────
+// ── Main Note Generation Pipeline ─────────────────────────────────────────────
 
 async function runPipeline(topicOverride, sendProgress) {
   const { selectedAIProvider: provider = "gemini-web" } =
@@ -132,7 +130,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   // ── GENERATE_NOTES ────────────────────────────────────────────────────────
   if (message?.type === "GENERATE_NOTES") {
     if (_isScanning) {
-      // Politely refuse instead of stacking broken skeleton cards.
       sendResponse({ ok: false, busy: true, error: "A scan is already running. Please wait for it to finish." });
       return true;
     }
@@ -143,6 +140,62 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       .then(() => sendResponse({ ok: true }))
       .catch((err) => sendResponse({ ok: false, error: err.message }))
       .finally(() => { _isScanning = false; });
+    return true;
+  }
+
+  // ── SEND_CHAT_MESSAGE ─────────────────────────────────────────────────────
+  if (message?.type === "SEND_CHAT_MESSAGE") {
+    const { provider, prompt, contextHistory, isMultiModel, providersList } = message;
+
+    if (isMultiModel && Array.isArray(providersList) && providersList.length > 0) {
+      // Parallel Multi-AI dispatch
+      Promise.allSettled(
+        providersList.map(async (p) => {
+          const text = await self.WebSessionBridge.sendChatMessageViaWebSession(p, prompt, contextHistory);
+          return { provider: p, text };
+        })
+      )
+        .then((results) => {
+          const responses = results.map((r, i) => {
+            if (r.status === "fulfilled") {
+              return { provider: r.value.provider, text: r.value.text, ok: true };
+            }
+            return { provider: providersList[i], error: r.reason?.message || "Failed", ok: false };
+          });
+          sendResponse({ ok: true, multi: true, responses });
+        })
+        .catch((err) => sendResponse({ ok: false, error: err.message }));
+      return true;
+    }
+
+    // Single AI dispatch
+    self.WebSessionBridge.sendChatMessageViaWebSession(provider, prompt, contextHistory)
+      .then((text) => sendResponse({ ok: true, text }))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  // ── SAVE_CHAT_TO_NOTE ─────────────────────────────────────────────────────
+  if (message?.type === "SAVE_CHAT_TO_NOTE") {
+    (async () => {
+      const { topicTitle, summary, takeaways, code, provider } = message.note;
+      const { notesList = [] } = await chrome.storage.local.get("notesList");
+      const noteId = `note_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      notesList.push({
+        id: noteId,
+        status: "done",
+        topicTitle: topicTitle || "Chat Insight",
+        summary: summary || "",
+        takeaways: Array.isArray(takeaways) ? takeaways : [],
+        code: code || null,
+        codeLanguage: "text",
+        sourceUrl: "NoteFlow Chat Hub",
+        provider: provider || "chatgpt-web",
+        createdAt: new Date().toISOString(),
+      });
+      await chrome.storage.local.set({ notesList });
+      sendResponse({ ok: true, noteId });
+    })().catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;
   }
 
