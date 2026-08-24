@@ -1,24 +1,25 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// popup.js — NoteFlow AI
+// popup.js — NoteFlow AI  v5.1
 // ─────────────────────────────────────────────────────────────────────────────
 
 const $ = (id) => document.getElementById(id);
 
-// ── Branding: fallback SVG monogram if remote logo fails ─────────────────────
+// ── Logo fallback ─────────────────────────────────────────────────────────────
 $("brandLogoImg").addEventListener("error", () => {
   $("brandLogoImg").classList.add("hidden");
   $("brandLogoFallback").classList.remove("hidden");
 });
 
-// ── Stage labels ─────────────────────────────────────────────────────────────
+// ── Stage labels ──────────────────────────────────────────────────────────────
 const STAGE_LABELS = {
-  idle:       "Idle",
-  extracting: "[ 1 / 4 ]  Extracting page content…",
-  opening:    "[ 2 / 4 ]  Opening Notes Dashboard…",
-  generating: "[ 3 / 4 ]  AI generating notes silently…",
-  appending:  "[ 4 / 4 ]  Saving to dashboard…",
-  success:    "✓ Done — note appended!",
-  error:      "⚠ Something went wrong",
+  idle:       "Ready",
+  extracting: "[1/4] Reading page content…",
+  opening:    "[2/4] Opening your dashboard…",
+  generating: "[3/4] AI is working in background…",
+  appending:  "[4/4] Saving note…",
+  success:    "✓ Note captured!",
+  error:      "Something went wrong",
+  busy:       "⏳ Previous scan still running…",
 };
 
 function setStatus(stage) {
@@ -27,137 +28,129 @@ function setStatus(stage) {
   badge.textContent = STAGE_LABELS[stage] || stage;
 }
 
+// ── Notes count stat ──────────────────────────────────────────────────────────
+async function refreshHeaderStat() {
+  const { notesList = [] } = await chrome.storage.local.get("notesList");
+  const done = notesList.filter((n) => n.status === "done").length;
+  $("headerNoteCount").textContent = done;
+}
+
+// Update the count whenever storage changes (e.g., after a scan completes).
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes.notesList) refreshHeaderStat();
+});
+
 // ── Provider detection ────────────────────────────────────────────────────────
 
 const PROVIDER_LABELS = {
-  "gemini-web":     "Gemini Web",
-  "chatgpt-web":    "ChatGPT Web",
-  "claude-web":     "Claude Web",
-  "perplexity-web": "Perplexity AI",
-  "deepseek-web":   "DeepSeek Web",
+  "gemini-web":     "Gemini",
+  "chatgpt-web":    "ChatGPT",
+  "claude-web":     "Claude",
+  "perplexity-web": "Perplexity",
+  "deepseek-web":   "DeepSeek",
 };
 
-function setSessionChip(state, text) {
+function setChip(state, text) {
   const chip = $("sessionChip");
   chip.className = `session-chip ${state}`;
   $("sessionChipText").textContent = text;
 }
 
 async function detectAndPopulateProviders() {
-  setSessionChip("detecting", "Detecting active sessions…");
+  setChip("detecting", "Detecting sessions…");
 
-  // Restore previously saved provider selection first (fast path).
   const { selectedAIProvider = "gemini-web" } =
     await chrome.storage.local.get("selectedAIProvider");
   $("aiProvider").value = selectedAIProvider;
 
-  // Ask the background worker to run cookie-based detection.
   chrome.runtime.sendMessage({ type: "DETECT_PROVIDERS" }, (response) => {
     if (chrome.runtime.lastError || !response?.ok) {
-      setSessionChip("inactive", "Could not detect sessions — select manually.");
+      setChip("inactive", "Sign in to a provider in Chrome to continue");
       return;
     }
 
-    const providers = response.providers; // [{ key, label, active }]
+    const providers = response.providers;
 
-    // Annotate the <select> options with a ✓ badge for detected active sessions.
-    const select = $("aiProvider");
-    Array.from(select.options).forEach((opt) => {
+    // Annotate options — put a ✓ prefix on actively-detected providers.
+    Array.from($("aiProvider").options).forEach((opt) => {
       const match = providers.find((p) => p.key === opt.value);
-      const isActive = match?.active ?? false;
-      opt.textContent = isActive
-        ? `✓ ${PROVIDER_LABELS[opt.value] || opt.value}`
-        : `${PROVIDER_LABELS[opt.value] || opt.value}`;
-      opt.dataset.active = isActive ? "true" : "false";
+      const label = PROVIDER_LABELS[opt.value] || opt.value;
+      opt.textContent = match?.active ? `✓ ${label}` : label;
     });
 
-    // Count how many providers appear active.
     const activeCount = providers.filter((p) => p.active).length;
 
-    // Verify the restored selection is still valid; if not, fall back to the
-    // first detected active provider.
-    const savedIsActive = providers.find(
-      (p) => p.key === selectedAIProvider && p.active
-    );
-    if (!savedIsActive) {
-      const firstActive = providers.find((p) => p.active);
-      if (firstActive) {
-        select.value = firstActive.key;
-        chrome.storage.local.set({ selectedAIProvider: firstActive.key });
+    // If saved provider isn't active, switch to first active one.
+    const savedActive = providers.find((p) => p.key === selectedAIProvider && p.active);
+    if (!savedActive) {
+      const first = providers.find((p) => p.active);
+      if (first) {
+        $("aiProvider").value = first.key;
+        chrome.storage.local.set({ selectedAIProvider: first.key });
       }
     }
 
+    const sel = providers.find((p) => p.key === $("aiProvider").value);
     if (activeCount === 0) {
-      setSessionChip(
-        "inactive",
-        "No active sessions detected — sign in to a provider in Chrome."
-      );
+      setChip("inactive", "No sessions detected — sign in to a provider");
     } else {
-      const selected = providers.find((p) => p.key === select.value);
-      setSessionChip(
-        "active",
-        `🔒 ${selected?.label ?? "Selected"} session active — no API key needed.`
-      );
+      setChip("active", `● ${sel?.label ?? "Selected"} · browser session active`);
     }
   });
 }
 
-// Update chip whenever the user changes the dropdown.
 $("aiProvider").addEventListener("change", async () => {
   const provider = $("aiProvider").value;
   await chrome.storage.local.set({ selectedAIProvider: provider });
-
   const label = PROVIDER_LABELS[provider] || provider;
-  setSessionChip("active", `🔒 ${label} session — make sure you're signed in.`);
+  setChip("active", `● ${label} · browser session active`);
 });
 
-// ── Scan & Add to Notes ───────────────────────────────────────────────────────
+// ── Scan ──────────────────────────────────────────────────────────────────────
 
-// Listen to progress broadcasts from the background worker.
-chrome.runtime.onMessage.addListener((message) => {
-  if (message?.type === "PROGRESS") {
-    setStatus(message.stage);
-  }
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg?.type === "PROGRESS") setStatus(msg.stage);
 });
 
 $("scanBtn").addEventListener("click", () => {
   const topicOverride = $("topicOverride").value.trim();
-  const errorBox      = $("errorBox");
-
-  errorBox.classList.add("hidden");
+  $("errorBox").classList.add("hidden");
   $("scanBtn").disabled = true;
   setStatus("extracting");
 
-  chrome.runtime.sendMessage(
-    { type: "GENERATE_NOTES", topicOverride },
-    (response) => {
-      $("scanBtn").disabled = false;
+  chrome.runtime.sendMessage({ type: "GENERATE_NOTES", topicOverride }, (response) => {
+    $("scanBtn").disabled = false;
 
-      if (chrome.runtime.lastError) {
-        setStatus("error");
-        errorBox.textContent = chrome.runtime.lastError.message;
-        errorBox.classList.remove("hidden");
-        return;
-      }
-
-      if (response?.ok) {
-        setStatus("success");
-        $("topicOverride").value = "";
-      } else {
-        setStatus("error");
-        errorBox.textContent = response?.error || "Something went wrong.";
-        errorBox.classList.remove("hidden");
-      }
+    if (chrome.runtime.lastError) {
+      setStatus("error");
+      $("errorBox").textContent = chrome.runtime.lastError.message;
+      $("errorBox").classList.remove("hidden");
+      return;
     }
-  );
+
+    if (response?.busy) {
+      setStatus("busy");
+      return;
+    }
+
+    if (response?.ok) {
+      setStatus("success");
+      $("topicOverride").value = "";
+      refreshHeaderStat();
+    } else {
+      setStatus("error");
+      $("errorBox").textContent = response?.error || "Something went wrong.";
+      $("errorBox").classList.remove("hidden");
+    }
+  });
 });
 
-// ── Open Dashboard ────────────────────────────────────────────────────────────
+// ── Dashboard ─────────────────────────────────────────────────────────────────
 $("openViewerBtn").addEventListener("click", () => {
   chrome.runtime.sendMessage({ type: "OPEN_VIEWER" });
 });
 
-// ── Clear All Notes (with inline confirmation) ────────────────────────────────
+// ── Clear All ─────────────────────────────────────────────────────────────────
 $("clearNotesBtn").addEventListener("click", () => {
   $("clearConfirm").classList.remove("hidden");
 });
@@ -170,8 +163,10 @@ $("clearConfirmYes").addEventListener("click", () => {
   chrome.runtime.sendMessage({ type: "CLEAR_NOTES" }, () => {
     $("clearConfirm").classList.add("hidden");
     setStatus("idle");
+    $("headerNoteCount").textContent = "0";
   });
 });
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 detectAndPopulateProviders();
+refreshHeaderStat();

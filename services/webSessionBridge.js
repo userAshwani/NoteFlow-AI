@@ -1,25 +1,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// services/webSessionBridge.js
+// services/webSessionBridge.js  v5.1
 //
-// Drives the user's already-logged-in AI web tabs (Gemini, ChatGPT, Claude,
-// Perplexity, DeepSeek) without touching credentials or bypassing logins.
-//
-// Key design:
-//  • All AI tabs are opened with `active: false, pinned: true` — the user's
-//    view is never stolen.
-//  • Completion detection uses a MutationObserver (event-driven) instead of
-//    busy-polling loops, making it CPU-friendly and more reliable.
-//  • One reusable chat thread per provider is kept alive across scans.
-//
-// Public API (exposed on `self.WebSessionBridge`):
-//   getNotesViaWebSession(provider, rawContent, topicOverride) → Promise<StructuredNotes>
-//   detectActiveProviders()                                    → Promise<ProviderStatus[]>
+// v5.1 key fix:
+//  • automateChatInPage now captures `existingBubbleCount` BEFORE sending the
+//    prompt and only watches for bubbles that appear AFTER that count. This
+//    prevents the observer from immediately picking up the previous response
+//    when multiple scans run on the same conversation thread — which caused
+//    "No response text scraped" errors on the 2nd/3rd scan.
 // ─────────────────────────────────────────────────────────────────────────────
-
-// ── Provider configs ─────────────────────────────────────────────────────────
-// Each entry is a prioritised list of CSS selectors. The bridge tries each in
-// order and uses the first match, so you can prepend a new selector without
-// removing the old one when a provider updates its DOM.
 
 const PROVIDERS = {
   "gemini-web": {
@@ -77,7 +65,12 @@ const PROVIDERS = {
       "button[aria-label*='Stop' i]",
     ],
     responseSelectors: [
+      // Ordered by specificity — try narrow selectors first
+      "[data-message-author-role='assistant'] .markdown.prose",
+      "[data-message-author-role='assistant'] .prose",
       "[data-message-author-role='assistant']",
+      ".group\\/conversation-turn .agent-turn .markdown",
+      ".group\\/conversation-turn .agent-turn",
     ],
     titleSelectors: [
       "nav a[data-active='true'] div.truncate",
@@ -112,7 +105,6 @@ const PROVIDERS = {
     ],
     titleSelectors: [
       "nav [aria-current='page'] span",
-      ".conversation-title",
     ],
   },
 
@@ -171,15 +163,11 @@ const PROVIDERS = {
       ".chat-message-content .markdown-body",
       ".message-content",
     ],
-    titleSelectors: [
-      ".chat-title",
-    ],
+    titleSelectors: [".chat-title"],
   },
 };
 
-// ── Prompt ───────────────────────────────────────────────────────────────────
-
-const SESSION_CHAT_TITLE = "NoteFlow AI — Study Notes Hub";
+const SESSION_CHAT_TITLE = "NoteFlow AI — Study Hub";
 
 const NOTES_SYSTEM_PROMPT = `You are an expert documentation summarizer. Summarize this lesson with zero fluff:
 1. Topic Title (Short, precise)
@@ -187,43 +175,35 @@ const NOTES_SYSTEM_PROMPT = `You are an expert documentation summarizer. Summari
 3. Key Points (3 to 5 bullet points covering syntax, properties, or rules)
 4. Code Snippet (Clean, practical, commented where helpful)
 
-Output must be formatted as structured JSON and reply with ONLY a single fenced JSON code block — no other text before or after:
+Output as a single fenced JSON code block — absolutely no other text:
 
 \`\`\`json
 {"topicTitle": "...", "summary": "...", "takeaways": ["..."], "code": "...", "codeLanguage": "javascript"}
 \`\`\`
 
-- If there is no meaningful code example, set "code" to null.
-- This is a new, separate lesson — do not reference or blend it with previous topics.
+- Set "code" to null if there is no meaningful example.
+- This is a brand-new topic. Do not reference anything from earlier in this chat.
 
-Here is the scraped page:
+Page content follows:
 `;
 
 function buildPrompt(rawContent, topicOverride) {
   const { title, url, text, headings, codeBlocks } = rawContent;
   let prompt = NOTES_SYSTEM_PROMPT;
   prompt += `\nPage title: ${title}\nURL: ${url}\n`;
-  if (topicOverride) {
-    prompt += `Use this as the topic title instead of inferring one: "${topicOverride}"\n`;
-  }
-  if (headings?.length) {
-    prompt += `\nHeadings found on page:\n${headings.map((h) => `- ${h}`).join("\n")}\n`;
-  }
+  if (topicOverride) prompt += `Topic title to use: "${topicOverride}"\n`;
+  if (headings?.length) prompt += `\nPage headings:\n${headings.map((h) => `- ${h}`).join("\n")}\n`;
   prompt += `\nContent:\n${text}\n`;
   if (codeBlocks?.length) {
-    prompt += `\nCode blocks found on page:\n`;
-    codeBlocks.forEach((block, i) => {
-      prompt += `\n--- code block ${i + 1} ---\n${block}\n`;
-    });
+    prompt += `\nCode samples:\n`;
+    codeBlocks.forEach((b, i) => (prompt += `--- [${i + 1}] ---\n${b}\n`));
   }
   return prompt;
 }
 
 // ── Page automation (injected into AI tab) ───────────────────────────────────
-// IMPORTANT: This function is serialised by Chrome and re-executed inside the
-// target page's isolated world. It must be completely self-contained — no
-// references to anything outside its own body. Only `cfg` and `promptText`
-// are passed in as serialisable args.
+// Self-contained — must not close over anything outside its own body.
+// Only `cfg` and `promptText` are passed as serialisable args.
 
 function automateChatInPage(cfg, promptText) {
   return (async () => {
@@ -231,21 +211,21 @@ function automateChatInPage(cfg, promptText) {
 
     function query(selectors) {
       for (const sel of selectors) {
-        const found = document.querySelector(sel);
-        if (found) return found;
+        const el = document.querySelector(sel);
+        if (el) return el;
       }
       return null;
     }
 
     function queryAll(selectors) {
       for (const sel of selectors) {
-        const found = document.querySelectorAll(sel);
-        if (found.length) return found;
+        const els = document.querySelectorAll(sel);
+        if (els.length) return els;
       }
       return [];
     }
 
-    // ── 1. Wait for the input box to hydrate (SPA may not be ready yet) ──
+    // ── 1. Wait for input ────────────────────────────────────────────────
     let input = null;
     const inputDeadline = Date.now() + 20000;
     while (Date.now() < inputDeadline) {
@@ -255,30 +235,32 @@ function automateChatInPage(cfg, promptText) {
     }
     if (!input) {
       throw new Error(
-        `Could not find the chat input on ${cfg.label}. ` +
-          `The UI may have changed, or you are not signed in.`
+        `Could not find the chat input on ${cfg.label}. Make sure you are signed in and the page is fully loaded.`
       );
     }
 
-    // ── 2. Fill the input (handles both contenteditable and <textarea>) ──
+    // ── 2. Snapshot existing response count BEFORE sending ───────────────
+    // This is the critical v5.1 fix: we only watch for bubbles that appear
+    // AFTER our prompt, preventing the observer from resolving immediately
+    // with the previous conversation's response.
+    const existingBubbleCount = queryAll(cfg.responseSelectors).length;
+
+    // ── 3. Fill the input ────────────────────────────────────────────────
     input.focus();
     if (input.tagName === "TEXTAREA") {
-      // React / Vue controlled textarea: bypass synthetic event system
-      const nativeSetter = Object.getOwnPropertyDescriptor(
-        window.HTMLTextAreaElement.prototype,
-        "value"
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype, "value"
       ).set;
-      nativeSetter.call(input, promptText);
+      setter.call(input, promptText);
       input.dispatchEvent(new Event("input", { bubbles: true }));
     } else {
-      // contenteditable (Gemini, ChatGPT, Claude)
       document.execCommand("selectAll", false, null);
       document.execCommand("insertText", false, promptText);
       input.dispatchEvent(new InputEvent("input", { bubbles: true, data: promptText }));
     }
     await sleep(500);
 
-    // ── 3. Send ─────────────────────────────────────────────────────────
+    // ── 4. Send ──────────────────────────────────────────────────────────
     const sendBtn = query(cfg.sendSelectors);
     if (sendBtn && !sendBtn.disabled) {
       sendBtn.click();
@@ -290,7 +272,7 @@ function automateChatInPage(cfg, promptText) {
       );
     }
 
-    // ── 4. Wait for response via MutationObserver (event-driven) ────────
+    // ── 5. Wait for NEW response via MutationObserver ────────────────────
     const responseText = await new Promise((resolve, reject) => {
       const TIMEOUT_MS = 120_000;
       let generationStarted = false;
@@ -307,17 +289,24 @@ function automateChatInPage(cfg, promptText) {
         resolve(text);
       }
 
-      // Hard deadline — we always resolve with whatever we have, or reject.
       const hardTimeout = setTimeout(() => {
         if (done) return;
         done = true;
         mo.disconnect();
         clearTimeout(debounceTimer);
+        // Grab whatever we have as a last resort.
         const bubbles = queryAll(cfg.responseSelectors);
-        const last = bubbles[bubbles.length - 1];
+        const newBubbles = Array.from(bubbles).slice(existingBubbleCount);
+        const last = newBubbles[newBubbles.length - 1];
         const text = last?.innerText?.trim();
         if (text) resolve(text);
-        else reject(new Error(`Timed out waiting for a response from ${cfg.label}.`));
+        else reject(
+          new Error(
+            `${cfg.label} did not respond within 2 minutes. ` +
+            `Make sure you're signed in and the tab isn't blocked. ` +
+            `Try again — if the issue persists, the provider's selectors may have changed.`
+          )
+        );
       }, TIMEOUT_MS);
 
       function check() {
@@ -326,65 +315,60 @@ function automateChatInPage(cfg, promptText) {
         if (stopEl) generationStarted = true;
 
         const bubbles = queryAll(cfg.responseSelectors);
-        const last = bubbles[bubbles.length - 1];
+        // Only look at bubbles that appeared AFTER our prompt was sent.
+        const newBubbles = Array.from(bubbles).slice(existingBubbleCount);
+        if (!newBubbles.length) return;
+
+        const last = newBubbles[newBubbles.length - 1];
         const text = last?.innerText?.trim() || "";
 
-        // Primary signal: stop button gone after it appeared + we have text.
+        // Primary: stop indicator gone after it appeared + text present.
         if (generationStarted && !stopEl && text) {
           finish(text);
           return;
         }
 
-        // Fallback: text hasn't changed in 2.5s (handles stale stop selectors).
+        // Fallback: text stable for 3s (handles stale stop selectors).
         if (text !== lastText) {
           lastText = text;
           clearTimeout(debounceTimer);
           if (text) {
             debounceTimer = setTimeout(() => {
               if (!query(cfg.stopSelectors)) finish(text);
-            }, 2500);
+            }, 3000);
           }
         }
       }
 
-      // MutationObserver fires on any DOM change in the page — event-driven,
-      // no busy-polling, far gentler on CPU than setInterval.
       const mo = new MutationObserver(check);
       mo.observe(document.body, { childList: true, subtree: true });
-
-      // Immediate check in case the response is already rendered.
-      check();
+      check(); // Immediate check.
     });
 
-    if (!responseText) {
-      throw new Error(`No response text was captured from ${cfg.label}.`);
-    }
+    if (!responseText) throw new Error(`No response received from ${cfg.label}.`);
     return responseText;
   })();
 }
 
-// ── JSON extraction ──────────────────────────────────────────────────────────
+// ── JSON extraction ───────────────────────────────────────────────────────────
 
 function extractJson(rawText) {
   let text = rawText.trim();
   const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
   if (fenceMatch) text = fenceMatch[1].trim();
-
   try {
     return JSON.parse(text);
   } catch {
     const start = text.indexOf("{");
     const end = text.lastIndexOf("}");
-    if (start !== -1 && end > start) {
-      return JSON.parse(text.slice(start, end + 1));
-    }
-    throw new Error("Could not parse a JSON notes object out of the AI reply.");
+    if (start !== -1 && end > start) return JSON.parse(text.slice(start, end + 1));
+    throw new Error("Couldn't parse a JSON notes object from the AI reply. The model may have replied in an unexpected format — try again.");
   }
 }
 
 function normalizeNotes(parsed) {
   return {
-    topicTitle: parsed.topicTitle || "Untitled Notes",
+    topicTitle: parsed.topicTitle || "Untitled",
     summary: parsed.summary || "",
     code: parsed.code || null,
     codeLanguage: parsed.codeLanguage || "javascript",
@@ -392,25 +376,22 @@ function normalizeNotes(parsed) {
   };
 }
 
-// ── Tab helpers ──────────────────────────────────────────────────────────────
+// ── Tab helpers ───────────────────────────────────────────────────────────────
 
 async function waitForTabComplete(tabId, timeoutMs = 30000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       chrome.tabs.onUpdated.removeListener(listener);
-      reject(new Error("Timed out waiting for the AI tab to finish loading."));
+      reject(new Error("Timed out waiting for the AI tab to load."));
     }, timeoutMs);
-
-    function listener(updatedTabId, changeInfo) {
-      if (updatedTabId === tabId && changeInfo.status === "complete") {
+    function listener(id, info) {
+      if (id === tabId && info.status === "complete") {
         clearTimeout(timer);
         chrome.tabs.onUpdated.removeListener(listener);
         resolve();
       }
     }
     chrome.tabs.onUpdated.addListener(listener);
-
-    // Resolve immediately if already loaded.
     chrome.tabs.get(tabId, (tab) => {
       if (tab?.status === "complete") {
         clearTimeout(timer);
@@ -421,53 +402,33 @@ async function waitForTabComplete(tabId, timeoutMs = 30000) {
   });
 }
 
-// Resolve the single reusable session tab for a provider:
-//   1. Saved URL + matching open tab → reuse as-is (preserves context).
-//   2. Saved URL + no open tab → reopen in background pinned tab.
-//   3. URL gone / redirect detected → start fresh chat.
-//   4. No saved URL → start fresh chat.
-// Returns { tab, isNewChat }.
 async function getOrCreateSessionTab(cfg) {
   const stored = await chrome.storage.local.get(cfg.sessionStorageKey);
   const savedUrl = stored[cfg.sessionStorageKey];
 
   if (savedUrl) {
-    // Try to find an already-open tab with this URL.
     const openTabs = await chrome.tabs.query({ url: `${savedUrl}*` });
-    if (openTabs.length > 0) {
-      return { tab: openTabs[0], isNewChat: false };
-    }
+    if (openTabs.length > 0) return { tab: openTabs[0], isNewChat: false };
 
-    // Reopen in background.
     try {
       const tab = await chrome.tabs.create({ url: savedUrl, active: false, pinned: true });
       await waitForTabComplete(tab.id);
       await new Promise((r) => setTimeout(r, 1500));
-
       const reopened = await chrome.tabs.get(tab.id);
-      const hostBase = cfg.hostPattern;
-      if (reopened.url?.startsWith(hostBase)) {
-        return { tab: reopened, isNewChat: false };
-      }
-      // Conversation was deleted — start fresh in this tab.
+      if (reopened.url?.startsWith(cfg.hostPattern)) return { tab: reopened, isNewChat: false };
       await chrome.tabs.update(tab.id, { url: cfg.baseUrl });
       await waitForTabComplete(tab.id);
       await new Promise((r) => setTimeout(r, 1500));
       return { tab: await chrome.tabs.get(tab.id), isNewChat: true };
-    } catch {
-      // Fall through to creating a brand-new tab.
-    }
+    } catch { /* fall through */ }
   }
 
-  // No saved URL — open a fresh conversation tab in the background.
   const tab = await chrome.tabs.create({ url: cfg.baseUrl, active: false, pinned: true });
   await waitForTabComplete(tab.id);
   await new Promise((r) => setTimeout(r, 1500));
   return { tab, isNewChat: true };
 }
 
-// Best-effort rename of a freshly created conversation. Failures are swallowed
-// because provider UIs vary and this is purely cosmetic.
 function tryRenameConversation(cfg, title) {
   try {
     for (const sel of cfg.titleSelectors || []) {
@@ -479,75 +440,55 @@ function tryRenameConversation(cfg, title) {
       el.dispatchEvent(new Event("blur", { bubbles: true }));
       return true;
     }
-  } catch {
-    // Non-fatal.
-  }
+  } catch { /* non-fatal */ }
   return false;
 }
 
-// ── Main public function ─────────────────────────────────────────────────────
+// ── Main public function ──────────────────────────────────────────────────────
 
 async function getNotesViaWebSession(provider, rawContent, topicOverride) {
   const cfg = PROVIDERS[provider];
-  if (!cfg) throw new Error("Unknown web session provider: " + provider);
+  if (!cfg) throw new Error("Unknown provider: " + provider);
 
   const { tab, isNewChat } = await getOrCreateSessionTab(cfg);
-  // AI tab stays in background — active: false preserves user focus.
 
   const promptText = buildPrompt(rawContent, topicOverride);
-
   let result;
   try {
-    const injectionResults = await chrome.scripting.executeScript({
+    const res = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: automateChatInPage,
       args: [cfg, promptText],
     });
-    result = injectionResults[0]?.result;
+    result = res[0]?.result;
 
     if (isNewChat) {
       await chrome.scripting
-        .executeScript({
-          target: { tabId: tab.id },
-          func: tryRenameConversation,
-          args: [cfg, SESSION_CHAT_TITLE],
-        })
+        .executeScript({ target: { tabId: tab.id }, func: tryRenameConversation, args: [cfg, SESSION_CHAT_TITLE] })
         .catch(() => {});
     }
   } catch (err) {
     throw new Error(`Automation failed on ${cfg.label}: ${err.message}`);
   } finally {
-    // Persist the chat URL (may include the new conversation ID) so the
-    // next scan reuses this same thread.
     try {
       const finalTab = await chrome.tabs.get(tab.id);
       if (finalTab.url?.startsWith(cfg.hostPattern)) {
         await chrome.storage.local.set({ [cfg.sessionStorageKey]: finalTab.url });
       }
-    } catch {
-      // Non-fatal.
-    }
+    } catch { /* non-fatal */ }
   }
 
-  if (!result) throw new Error(`No response text was scraped from ${cfg.label}.`);
-
-  const parsed = extractJson(result);
-  return normalizeNotes(parsed);
+  if (!result) throw new Error(`No response captured from ${cfg.label}. Check that you're signed in and the provider's page loaded correctly.`);
+  return normalizeNotes(extractJson(result));
 }
 
-// ── Provider login detection ─────────────────────────────────────────────────
-// Uses chrome.cookies to make a best-effort guess at whether the user is
-// currently logged in to each provider. A cookie count > 2 is used as a
-// heuristic — not 100% accurate, but reliable enough for UX purposes.
+// ── Provider detection ────────────────────────────────────────────────────────
 
 async function detectActiveProviders() {
   const candidates = Object.entries(PROVIDERS).map(([key, cfg]) => ({
-    key,
-    label: cfg.label,
-    domain: cfg.cookieDomain,
+    key, label: cfg.label, domain: cfg.cookieDomain,
   }));
-
-  const results = await Promise.all(
+  return Promise.all(
     candidates.map(async ({ key, label, domain }) => {
       try {
         const cookies = await chrome.cookies.getAll({ domain });
@@ -557,8 +498,6 @@ async function detectActiveProviders() {
       }
     })
   );
-  return results;
 }
 
-// ── Export ───────────────────────────────────────────────────────────────────
 self.WebSessionBridge = { getNotesViaWebSession, detectActiveProviders, PROVIDERS };

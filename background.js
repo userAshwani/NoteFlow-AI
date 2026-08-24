@@ -1,19 +1,25 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// background.js — NoteFlow AI Service Worker
+// background.js — NoteFlow AI Service Worker  v5.1
 //
-// Pipeline (4 phases):
-//  [1] Extract page content from the user's active tab.
-//  [2] Immediately open viewer.html and insert a skeleton/shimmer note so the
-//      user has instant visual feedback — no blank waiting screens.
-//  [3] Run the AI session silently in the background (active: false tabs).
-//  [4] Replace the skeleton with the resolved note; dashboard card animates in.
+// Pipeline phases:
+//  [1] Extract page content from the active tab.
+//  [2] Open viewer + write skeleton note → instant shimmer on dashboard.
+//  [3] AI session runs silently (active:false tabs, never steals focus).
+//  [4] Skeleton replaced by real note card with fade-in animation.
 //
-// The user never loses focus on viewer.html during the entire process.
+// v5.1 changes:
+//  • Concurrency guard — only one scan runs at a time. Further clicks get a
+//    friendly "busy" response instead of stacking broken skeletons.
 // ─────────────────────────────────────────────────────────────────────────────
 
 importScripts("services/webSessionBridge.js");
 
-// ── Content extraction ───────────────────────────────────────────────────────
+// ── Concurrency guard ─────────────────────────────────────────────────────────
+// Service workers remain alive for the duration of an async operation, so this
+// flag persists correctly across multiple clicks within the same scan session.
+let _isScanning = false;
+
+// ── Content extraction ────────────────────────────────────────────────────────
 
 async function getActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -22,29 +28,23 @@ async function getActiveTab() {
 }
 
 async function extractContent(tabId) {
-  // Inject content.js (idempotent — safe to call repeatedly).
   await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
   const [{ result }] = await chrome.scripting.executeScript({
     target: { tabId },
     func: () => window.__notesFromAiExtract?.(),
   });
-  if (!result?.text) throw new Error("Could not extract readable content from this page.");
+  if (!result?.text) throw new Error("Couldn't extract readable content from this page. Try a different page or wait for it to fully load.");
   return result;
 }
 
-// ── Storage helpers ──────────────────────────────────────────────────────────
+// ── Storage helpers ───────────────────────────────────────────────────────────
 
-/**
- * Appends a skeleton/placeholder note to notesList in storage.
- * The dashboard detects this via chrome.storage.onChanged and renders a
- * shimmering "Generating…" card immediately.
- */
 async function insertSkeletonNote(id, sourceUrl, provider, topicHint) {
   const { notesList = [] } = await chrome.storage.local.get("notesList");
   notesList.push({
     id,
     status: "generating",
-    topicTitle: topicHint ? `Generating: ${topicHint}` : "Generating topic notes…",
+    topicTitle: topicHint ? `${topicHint}` : "Generating…",
     sourceUrl,
     provider,
     createdAt: new Date().toISOString(),
@@ -52,31 +52,15 @@ async function insertSkeletonNote(id, sourceUrl, provider, topicHint) {
   await chrome.storage.local.set({ notesList });
 }
 
-/**
- * Replaces the skeleton entry (matched by id) with the fully resolved note.
- * The dashboard detects the status change and swaps skeleton → card.
- */
 async function finaliseNote(id, resolvedFields) {
   const { notesList = [] } = await chrome.storage.local.get("notesList");
   const idx = notesList.findIndex((n) => n.id === id);
-  const finalNote = {
-    ...resolvedFields,
-    id,
-    status: "done",
-    createdAt: new Date().toISOString(),
-  };
-  if (idx !== -1) {
-    notesList[idx] = finalNote;
-  } else {
-    notesList.push(finalNote);
-  }
+  const finalNote = { ...resolvedFields, id, status: "done", createdAt: new Date().toISOString() };
+  if (idx !== -1) notesList[idx] = finalNote;
+  else notesList.push(finalNote);
   await chrome.storage.local.set({ notesList });
 }
 
-/**
- * Marks the skeleton as errored so the dashboard can render an error card
- * instead of leaving the shimmer spinning indefinitely.
- */
 async function markSkeletonFailed(id, errorMessage) {
   const { notesList = [] } = await chrome.storage.local.get("notesList");
   const idx = notesList.findIndex((n) => n.id === id);
@@ -86,7 +70,7 @@ async function markSkeletonFailed(id, errorMessage) {
   }
 }
 
-// ── Viewer tab management ────────────────────────────────────────────────────
+// ── Viewer tab ────────────────────────────────────────────────────────────────
 
 const VIEWER_PATH = "viewer.html";
 
@@ -94,27 +78,23 @@ async function openOrFocusViewer() {
   const viewerUrl = chrome.runtime.getURL(VIEWER_PATH);
   const tabs = await chrome.tabs.query({ url: viewerUrl });
   if (tabs.length > 0) {
-    const tab = tabs[0];
-    await chrome.tabs.update(tab.id, { active: true });
-    await chrome.windows.update(tab.windowId, { focused: true });
-    return tab;
+    await chrome.tabs.update(tabs[0].id, { active: true });
+    await chrome.windows.update(tabs[0].windowId, { focused: true });
+    return tabs[0];
   }
   return chrome.tabs.create({ url: viewerUrl });
 }
 
-// ── Main pipeline ────────────────────────────────────────────────────────────
+// ── Main pipeline ─────────────────────────────────────────────────────────────
 
 async function runPipeline(topicOverride, sendProgress) {
   const { selectedAIProvider: provider = "gemini-web" } =
     await chrome.storage.local.get("selectedAIProvider");
 
-  // ── Phase 1: Extract content from the current tab ─────────────────────
   sendProgress("extracting");
   const sourceTab = await getActiveTab();
   const rawContent = await extractContent(sourceTab.id);
 
-  // ── Phase 2: Open dashboard + inject skeleton note ────────────────────
-  // Do both in parallel — the viewer opens while the skeleton write is in flight.
   sendProgress("opening");
   const noteId = `note_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   await Promise.all([
@@ -122,23 +102,15 @@ async function runPipeline(topicOverride, sendProgress) {
     insertSkeletonNote(noteId, rawContent.url, provider, topicOverride || null),
   ]);
 
-  // ── Phase 3: Silent background AI session ─────────────────────────────
-  // The AI tab is opened with active:false (see webSessionBridge) so the
-  // user's view of viewer.html is never interrupted.
   sendProgress("generating");
   let notes;
   try {
-    notes = await self.WebSessionBridge.getNotesViaWebSession(
-      provider,
-      rawContent,
-      topicOverride
-    );
+    notes = await self.WebSessionBridge.getNotesViaWebSession(provider, rawContent, topicOverride);
   } catch (err) {
     await markSkeletonFailed(noteId, err.message);
     throw err;
   }
 
-  // ── Phase 4: Replace skeleton with finalised note ──────────────────────
   sendProgress("appending");
   await finaliseNote(noteId, {
     topicTitle: notes.topicTitle,
@@ -153,20 +125,28 @@ async function runPipeline(topicOverride, sendProgress) {
   sendProgress("success");
 }
 
-// ── Message router ───────────────────────────────────────────────────────────
+// ── Message router ────────────────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  // ── GENERATE_NOTES: Run the full note-generation pipeline ─────────────
+
+  // ── GENERATE_NOTES ────────────────────────────────────────────────────────
   if (message?.type === "GENERATE_NOTES") {
+    if (_isScanning) {
+      // Politely refuse instead of stacking broken skeleton cards.
+      sendResponse({ ok: false, busy: true, error: "A scan is already running. Please wait for it to finish." });
+      return true;
+    }
+    _isScanning = true;
     runPipeline(message.topicOverride, (stage) => {
       chrome.runtime.sendMessage({ type: "PROGRESS", stage }).catch(() => {});
     })
       .then(() => sendResponse({ ok: true }))
-      .catch((err) => sendResponse({ ok: false, error: err.message }));
-    return true; // Keep message channel open for async response.
+      .catch((err) => sendResponse({ ok: false, error: err.message }))
+      .finally(() => { _isScanning = false; });
+    return true;
   }
 
-  // ── OPEN_VIEWER: Focus or create the Notes Dashboard tab ──────────────
+  // ── OPEN_VIEWER ───────────────────────────────────────────────────────────
   if (message?.type === "OPEN_VIEWER") {
     openOrFocusViewer()
       .then(() => sendResponse({ ok: true }))
@@ -174,16 +154,27 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
-  // ── CLEAR_NOTES: Wipe all saved notes ─────────────────────────────────
+  // ── CLEAR_NOTES ───────────────────────────────────────────────────────────
   if (message?.type === "CLEAR_NOTES") {
     chrome.storage.local
-      .set({ notesList: [] })
+      .set({ notesList: [], pinnedNoteIds: [] })
       .then(() => sendResponse({ ok: true }))
       .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;
   }
 
-  // ── DETECT_PROVIDERS: Cookie-based provider login detection ───────────
+  // ── DELETE_NOTE ───────────────────────────────────────────────────────────
+  if (message?.type === "DELETE_NOTE") {
+    (async () => {
+      const { notesList = [] } = await chrome.storage.local.get("notesList");
+      const filtered = notesList.filter((n) => n.id !== message.noteId);
+      await chrome.storage.local.set({ notesList: filtered });
+      sendResponse({ ok: true });
+    })().catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  // ── DETECT_PROVIDERS ──────────────────────────────────────────────────────
   if (message?.type === "DETECT_PROVIDERS") {
     self.WebSessionBridge.detectActiveProviders()
       .then((providers) => sendResponse({ ok: true, providers }))

@@ -7,64 +7,180 @@
 </head>
 <body>
 
-  <!-- ── Top bar ─────────────────────────────────────────────────────────── -->
+  <!-- ── Top bar ──────────────────────────────────────────────────────────── -->
   <header class="topbar">
-    <div class="topbar-left">
-      <span class="brand-logo">
-        <img id="brandLogoImg" class="brand-logo-img"
-          src="https://ashwanitiwari.com/logo.png" alt="NoteFlow AI" />
-        <svg id="brandLogoFallback" class="brand-logo-fallback hidden"
-          viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-          <rect width="40" height="40" rx="10" fill="#2563eb" />
-          <text x="20" y="26" text-anchor="middle"
-            font-family="-apple-system, Segoe UI, Roboto, sans-serif"
-            font-size="14" font-weight="700" fill="#fff">NF</text>
+    <div class="tb-brand">
+      <span class="tb-logo">
+        <img id="brandLogoImg" class="logo-img"
+          src="https://ashwanitiwari.com/logo.png" alt="" />
+        <svg id="brandLogoFallback" class="logo-fallback hidden"
+          viewBox="0 0 36 36" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect width="36" height="36" rx="9" fill="url(#hg)"/>
+          <defs>
+            <linearGradient id="hg" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#2563eb"/>
+              <stop offset="100%" stop-color="#4f46e5"/>
+            </linearGradient>
+          </defs>
+          <text x="18" y="24" text-anchor="middle"
+            font-family="-apple-system,Segoe UI,sans-serif"
+            font-size="13" font-weight="800" fill="#fff">NF</text>
         </svg>
       </span>
-      <div class="brand-text">
-        <span class="brand">NoteFlow AI</span>
-        <span class="topic-count" id="topicCount"></span>
+      <div class="tb-titles">
+        <span class="tb-name">NoteFlow AI</span>
+        <span class="tb-sub" id="topicCount">Your knowledge base</span>
       </div>
     </div>
-    <div class="topbar-actions">
-      <button id="exportHtmlBtn" class="toolbar-btn" title="Export as HTML">⬇ Export</button>
-      <button id="printBtn"      class="toolbar-btn" title="Print / Save as PDF">🖨 Print</button>
-      <button id="copyAllBtn"    class="toolbar-btn" title="Copy Full Document">📋 Copy All</button>
-      <button id="themeToggleBtn" class="toolbar-btn icon-btn" title="Toggle dark / light mode">☀️</button>
+
+    <div class="tb-actions">
+      <button id="flashcardBtn" class="tb-btn tb-btn--flash" title="Flashcard Study Mode">
+        <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8">
+          <rect x="2" y="4" width="14" height="10" rx="2"/>
+          <path d="M9 7v4M7 9h4"/>
+        </svg>
+        Flashcards
+      </button>
+      <button id="exportHtmlBtn" class="tb-btn" title="Export as HTML">
+        <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8">
+          <path d="M9 2v10M5 8l4 4 4-4"/><rect x="3" y="13" width="12" height="3" rx="1"/>
+        </svg>
+        Export
+      </button>
+      <button id="copyAllBtn" class="tb-btn" title="Copy all notes as text">
+        <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8">
+          <rect x="6" y="4" width="9" height="11" rx="1.5"/>
+          <path d="M4 13V3h9"/>
+        </svg>
+        Copy All
+      </button>
+      <button id="clearAllBtn" class="tb-btn tb-btn--danger" title="Clear all notes">
+        <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8">
+          <path d="M3 5h12M7 5V3h4v2M5 5l1 10h6l1-10"/>
+        </svg>
+        Clear All
+      </button>
+      <button id="themeBtn" class="tb-btn tb-btn--icon" title="Toggle dark/light mode">
+        <svg id="themeIconDark" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8">
+          <circle cx="9" cy="9" r="3.5"/><path d="M9 1v2M9 15v2M1 9h2M15 9h2M3.22 3.22l1.41 1.41M13.37 13.37l1.41 1.41M14.78 3.22l-1.41 1.41M4.63 13.37l-1.41 1.41"/>
+        </svg>
+        <svg id="themeIconLight" class="hidden" viewBox="0 0 18 18" fill="currentColor">
+          <path d="M9 2a7 7 0 0 0 0 14 7 7 0 0 1 0-14z"/>
+        </svg>
+      </button>
     </div>
   </header>
 
-  <!-- ── Layout ──────────────────────────────────────────────────────────── -->
+  <!-- Inline clear confirm (below topbar) -->
+  <div id="clearConfirmBar" class="clear-confirm-bar hidden">
+    <span>Delete all saved notes? This cannot be undone.</span>
+    <div class="cc-actions">
+      <button id="ccYes" class="cc-yes">Yes, clear all</button>
+      <button id="ccNo" class="cc-no">Cancel</button>
+    </div>
+  </div>
+
+  <!-- ── Layout ────────────────────────────────────────────────────────────── -->
   <div class="layout">
 
-    <!-- Sidebar TOC -->
+    <!-- Sidebar -->
     <nav class="sidebar" id="sidebar">
-      <div class="sidebar-title">Table of Contents</div>
+      <!-- Stats -->
+      <div class="sidebar-stats" id="sidebarStats">
+        <div class="ss-row">
+          <div class="ss-item">
+            <span class="ss-val" id="statNotes">0</span>
+            <span class="ss-key">Notes</span>
+          </div>
+          <div class="ss-item">
+            <span class="ss-val" id="statPinned">0</span>
+            <span class="ss-key">Pinned</span>
+          </div>
+          <div class="ss-item">
+            <span class="ss-val" id="statProviders">—</span>
+            <span class="ss-key">Provider</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="sidebar-label">Contents</div>
       <ol class="toc-list" id="tocList"></ol>
     </nav>
 
     <!-- Main content -->
     <main class="doc" id="docRoot">
-      <div class="empty-state" id="emptyState">
-        <div class="empty-emoji">📭</div>
-        <h2>No notes yet</h2>
-        <p>Open a page you want to study, click the extension icon, and hit
-          <strong>"Scan &amp; Add to Notes"</strong>. New topics appear here instantly.</p>
-      </div>
-      <div id="topicsRoot"></div>
-    </main>
 
+      <!-- Filter bar (search + sort) -->
+      <div class="filter-bar">
+        <div class="search-wrap">
+          <svg class="search-icon" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="7.5" cy="7.5" r="4.5"/><path d="M11 11l3.5 3.5"/>
+          </svg>
+          <input type="text" id="searchInput" class="search-input"
+            placeholder="Search notes…" autocomplete="off" />
+          <button id="searchClear" class="search-clear hidden" title="Clear search">✕</button>
+        </div>
+        <select id="sortSelect" class="sort-select" title="Sort order">
+          <option value="newest">Newest</option>
+          <option value="oldest">Oldest</option>
+          <option value="alpha">A → Z</option>
+          <option value="pinned">Pinned first</option>
+        </select>
+      </div>
+
+      <p id="searchHint" class="search-hint hidden"></p>
+
+      <!-- Empty state -->
+      <div class="empty-state hidden" id="emptyState">
+        <div class="empty-icon">📭</div>
+        <h2>Nothing here yet</h2>
+        <p>Browse any page you want to learn from, click the extension icon,
+          then hit <strong>Capture Page Notes</strong>. Your note appears here instantly.</p>
+      </div>
+
+      <!-- Notes -->
+      <div id="topicsRoot"></div>
+
+    </main>
   </div>
 
-  <!-- ── Footer ─────────────────────────────────────────────────────────── -->
+  <!-- ── Footer ───────────────────────────────────────────────────────────── -->
   <footer class="site-footer">
-    <span class="footer-badge">
-      Developed by <a href="https://ashwanitiwari.com" target="_blank" rel="noopener">ashwanitiwari.com</a>
-    </span>
+    <a href="https://ashwanitiwari.com" target="_blank" rel="noopener" class="footer-link">
+      ashwanitiwari.com
+    </a>
   </footer>
 
-  <!-- Toast notification -->
+  <!-- ── Toast ────────────────────────────────────────────────────────────── -->
   <div id="toast" class="toast hidden"></div>
+
+  <!-- ── Flashcard Overlay ────────────────────────────────────────────────── -->
+  <div class="fc-overlay hidden" id="fcOverlay">
+    <div class="fc-modal">
+      <div class="fc-header">
+        <span class="fc-title-label">⚡ Flashcard Study Mode</span>
+        <span class="fc-progress" id="fcProgress">1 / 1</span>
+        <button class="fc-close" id="fcClose">✕ Exit</button>
+      </div>
+      <div class="fc-card" id="fcCard">
+        <div class="fc-front" id="fcFront">
+          <div class="fc-q-number" id="fcQNum">Q1</div>
+          <h2 class="fc-q-title" id="fcTitle">Topic Title</h2>
+          <p class="fc-tap-hint">Click "Reveal" to see the answer</p>
+        </div>
+        <div class="fc-back hidden" id="fcBack">
+          <p class="fc-summary" id="fcSummary"></p>
+          <ul class="fc-takeaways" id="fcTakeaways"></ul>
+        </div>
+      </div>
+      <div class="fc-controls">
+        <button class="fc-nav-btn" id="fcPrev">← Prev</button>
+        <button class="fc-reveal-btn" id="fcReveal">Reveal Answer</button>
+        <button class="fc-nav-btn" id="fcNext">Next →</button>
+      </div>
+      <div class="fc-hint">Navigate with ← → arrow keys</div>
+    </div>
+  </div>
 
   <script src="viewer.js"></script>
 </body>
