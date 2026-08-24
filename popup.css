@@ -1,0 +1,244 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  width: 340px;
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #f7f8fa;
+  color: #1f2430;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px;
+  border-bottom: 1px solid #e4e6ea;
+  background: #fff;
+}
+
+.brand-logo {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: none;
+}
+
+.brand-logo-img,
+.brand-logo-fallback {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  object-fit: cover;
+  color: #4f46e5;
+}
+
+.app-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #1f2430;
+}
+
+.app-title-sep {
+  color: #9297a6;
+  font-weight: 400;
+  margin: 0 1px;
+}
+
+.app-footer {
+  display: flex;
+  justify-content: center;
+  padding: 4px 16px 14px;
+}
+
+.footer-badge {
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid #e4e6ea;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.footer-badge a {
+  color: #4f46e5;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.footer-badge a:hover {
+  text-decoration: underline;
+}
+
+main {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #4b5563;
+  margin-top: 4px;
+}
+
+.session-status {
+  padding: 8px 10px;
+  background: #eef2ff;
+  color: #3730a3;
+  border-radius: 6px;
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+input[type="text"],
+input[type="password"],
+select {
+  padding: 8px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 13px;
+  background: #fff;
+  color: #1f2430;
+}
+
+input:focus,
+select:focus {
+  outline: none;
+  border-color: #4f46e5;
+}
+
+.primary-btn {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: #4f46e5;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.primary-btn:hover {
+  background: #4338ca;
+}
+
+.primary-btn:disabled {
+  background: #a5a6f6;
+  cursor: not-allowed;
+}
+
+.secondary-btn {
+  padding: 9px 12px;
+  background: #fff;
+  color: #4f46e5;
+  border: 1px solid #4f46e5;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.secondary-btn:hover {
+  background: #eef2ff;
+}
+
+.danger-btn {
+  padding: 9px 12px;
+  background: #fff;
+  color: #dc2626;
+  border: 1px solid #dc2626;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.danger-btn:hover {
+  background: #fef2f2;
+}
+
+.danger-btn.small,
+.secondary-btn.small {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.status-badge {
+  margin-top: 4px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.status-badge.idle {
+  background: #f1f2f4;
+  color: #6b7280;
+}
+
+.status-badge.scanning,
+.status-badge.generating,
+.status-badge.appending {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.status-badge.success {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.status-badge.error {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.error-box {
+  padding: 10px;
+  background: #fee2e2;
+  color: #991b1b;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.save-confirm {
+  font-size: 12px;
+  color: #065f46;
+  font-weight: 600;
+}
+
+.clear-confirm {
+  padding: 10px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #991b1b;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.clear-confirm-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.hidden {
+  display: none !important;
+}
+
+hr {
+  border: none;
+  border-top: 1px solid #e4e6ea;
+  margin: 6px 0;
+}

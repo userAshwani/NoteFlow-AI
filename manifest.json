@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "Ashwani Tiwari | Notes From AI",
+  "version": "4.0.0",
+  "description": "Extract webpage content and summarize it into structured study notes using your logged-in Gemini or ChatGPT web session — no API keys required. By ashwanitiwari.com.",
+  "permissions": ["activeTab", "scripting", "storage", "tabs"],
+  "host_permissions": [
+    "https://gemini.google.com/*",
+    "https://chatgpt.com/*",
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

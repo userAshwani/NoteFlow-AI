@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Ashwani Tiwari | Notes From AI</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header class="app-header">
+    <span class="brand-logo">
+      <img id="brandLogoImg" class="brand-logo-img" src="https://ashwanitiwari.com/logo.png" alt="Ashwani Tiwari" />
+      <svg id="brandLogoFallback" class="brand-logo-fallback hidden" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <rect width="40" height="40" rx="10" fill="currentColor" />
+        <text x="20" y="26" text-anchor="middle" font-family="-apple-system, Segoe UI, Roboto, sans-serif" font-size="15" font-weight="700" fill="#fff">AT</text>
+      </svg>
+    </span>
+    <span class="app-title">Ashwani Tiwari <span class="app-title-sep">|</span> Notes From AI</span>
+  </header>
+
+  <main>
+    <label for="provider">AI Provider</label>
+    <select id="provider">
+      <option value="gemini-web">Gemini Web (Browser Session)</option>
+      <option value="chatgpt-web">ChatGPT Web (Browser Session)</option>
+    </select>
+
+    <div class="session-status" id="sessionStatus">
+      🔒 Logged-in browser session active — no API key needed. Make sure
+      you're signed in to this provider in Chrome.
+    </div>
+
+    <label for="topicOverride">Topic title (optional)</label>
+    <input type="text" id="topicOverride" placeholder="Leave blank to let AI decide" />
+
+    <button id="scanBtn" class="primary-btn">Scan &amp; Add to Notes</button>
+
+    <div id="statusBadge" class="status-badge idle">Idle</div>
+    <div id="errorBox" class="error-box hidden"></div>
+
+    <hr />
+
+    <button id="openViewerBtn" class="secondary-btn">Open Notes Dashboard</button>
+    <button id="clearNotesBtn" class="danger-btn">Clear All Notes</button>
+    <div id="clearConfirm" class="clear-confirm hidden">
+      <span>Delete all saved notes? This can't be undone.</span>
+      <div class="clear-confirm-actions">
+        <button id="clearConfirmYes" class="danger-btn small">Yes, clear</button>
+        <button id="clearConfirmNo" class="secondary-btn small">Cancel</button>
+      </div>
+    </div>
+  </main>
+
+  <footer class="app-footer">
+    <span class="footer-badge">Developed by <a href="https://ashwanitiwari.com" target="_blank" rel="noopener">ashwanitiwari.com</a></span>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>

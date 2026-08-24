@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Notes Dashboard — Ashwani Tiwari | Notes From AI</title>
+  <link rel="stylesheet" href="viewer.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-left">
+      <span class="brand-logo">
+        <img id="brandLogoImg" class="brand-logo-img" src="https://ashwanitiwari.com/logo.png" alt="Ashwani Tiwari" />
+        <svg id="brandLogoFallback" class="brand-logo-fallback hidden" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect width="40" height="40" rx="10" fill="currentColor" />
+          <text x="20" y="26" text-anchor="middle" font-family="-apple-system, Segoe UI, Roboto, sans-serif" font-size="15" font-weight="700" fill="var(--bg)">AT</text>
+        </svg>
+      </span>
+      <div class="brand-text">
+        <span class="brand">Ashwani Tiwari <span class="brand-sep">|</span> Notes From AI</span>
+        <span class="topic-count" id="topicCount"></span>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <button id="exportHtmlBtn" class="toolbar-btn" title="Export as HTML">⬇ Export HTML</button>
+      <button id="printBtn" class="toolbar-btn" title="Print / Save as PDF">🖨 Print / PDF</button>
+      <button id="copyAllBtn" class="toolbar-btn" title="Copy Full Document">📋 Copy All</button>
+      <button id="themeToggleBtn" class="toolbar-btn icon-btn" title="Toggle dark / light mode">🌙</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <nav class="sidebar" id="sidebar">
+      <div class="sidebar-title">Table of Contents</div>
+      <ol class="toc-list" id="tocList"></ol>
+    </nav>
+
+    <main class="doc" id="docRoot">
+      <div class="empty-state" id="emptyState">
+        <div class="empty-emoji">📭</div>
+        <h2>No notes yet</h2>
+        <p>Open a page you want to study, click the extension icon, and hit
+          <strong>“Scan &amp; Add to Notes”</strong>. New topics will appear here instantly.</p>
+      </div>
+      <div id="topicsRoot"></div>
+    </main>
+  </div>
+
+  <footer class="site-footer">
+    <span class="footer-badge">Developed by <a href="https://ashwanitiwari.com" target="_blank" rel="noopener">ashwanitiwari.com</a></span>
+  </footer>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="viewer.js"></script>
+</body>
+</html>
