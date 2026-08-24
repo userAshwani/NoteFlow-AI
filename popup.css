@@ -1,6 +1,6 @@
 /* ─────────────────────────────────────────────────────────────────────────
-   NoteFlow AI — Popup Stylesheet  v5.2
-   Modern Dark Slate & Indigo aesthetic · Zero red/coral/pink
+   NoteFlow AI — Modern Light Popup Stylesheet  v5.3
+   Clean, high-contrast, professional SaaS light widget aesthetic.
    ───────────────────────────────────────────────────────────────────────── */
 
 *, *::before, *::after {
@@ -10,35 +10,44 @@
 }
 
 :root {
-  --bg-app:        #0c101c;
-  --bg-header:     linear-gradient(145deg, #111827 0%, #0f172a 100%);
-  --bg-card:       #111827;
-  --bg-input:      #161f33;
-  --bg-hover:      #1a253d;
+  --bg-app:        #ffffff;
+  --bg-header:     #f8fafc;
+  --bg-input:      #ffffff;
+  --bg-subtle:     #f1f5f9;
+  --bg-hover:      #f8fafc;
 
-  --border-subtle: rgba(255, 255, 255, 0.08);
-  --border-mid:    rgba(255, 255, 255, 0.14);
+  --border-subtle: #e2e8f0;
+  --border-mid:    #cbd5e1;
 
-  --text-main:     #f8fafc;
-  --text-muted:    #94a3b8;
+  --text-main:     #0f172a;
+  --text-body:     #1e293b;
+  --text-muted:    #475569;
   --text-dim:      #64748b;
 
-  --primary:       #3b82f6;
-  --primary-hover: #2563eb;
-  --indigo:        #6366f1;
-  --emerald:       #10b981;
-  --emerald-bg:    rgba(16, 185, 129, 0.12);
-  --amber:         #f59e0b;
-  --amber-bg:      rgba(245, 158, 11, 0.12);
-  --amber-border:  rgba(245, 158, 11, 0.3);
+  --primary:       #2563eb;
+  --primary-hover: #1d4ed8;
+  --primary-glow:  rgba(37, 99, 235, 0.2);
+  --primary-bg:    #eff6ff;
+  --primary-border:#bfdbfe;
+
+  --emerald:       #059669;
+  --emerald-bg:    #ecfdf5;
+  --emerald-border:#a7f3d0;
+  --emerald-text:  #065f46;
+
+  --amber:         #d97706;
+  --amber-bg:      #fffbeb;
+  --amber-border:  #fde68a;
+  --amber-text:    #92400e;
 
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif;
+  color-scheme: light;
 }
 
 body {
   width: 360px;
   background-color: var(--bg-app);
-  color: var(--text-main);
+  color: var(--text-body);
   font-size: 13px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -62,15 +71,15 @@ body {
 }
 
 .brand-logo {
-  width: 34px;
-  height: 34px;
-  border-radius: 9px;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
   overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #2563eb, #6366f1);
-  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
+  background: linear-gradient(135deg, #2563eb, #4f46e5);
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.25);
   flex: none;
 }
 
@@ -81,7 +90,7 @@ body {
 }
 
 .brand-logo-fallback {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 800;
   color: #fff;
 }
@@ -99,15 +108,15 @@ body {
 
 .app-title {
   font-size: 14.5px;
-  font-weight: 700;
-  color: #ffffff;
+  font-weight: 800;
+  color: var(--text-main);
   letter-spacing: -0.02em;
 }
 
 .version-badge {
   font-size: 9px;
   font-weight: 800;
-  background: linear-gradient(135deg, #3b82f6, #6366f1);
+  background: var(--primary);
   color: #ffffff;
   padding: 1px 5px;
   border-radius: 4px;
@@ -124,8 +133,8 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  background: rgba(99, 102, 241, 0.12);
-  border: 1px solid rgba(99, 102, 241, 0.25);
+  background: var(--primary-bg);
+  border: 1px solid var(--primary-border);
   border-radius: 8px;
   padding: 4px 10px;
   min-width: 44px;
@@ -134,15 +143,15 @@ body {
 .stat-num {
   font-size: 16px;
   font-weight: 800;
-  color: #c7d2fe;
+  color: var(--primary);
   line-height: 1.1;
 }
 
 .stat-lbl {
   font-size: 9px;
-  font-weight: 700;
+  font-weight: 800;
   text-transform: uppercase;
-  color: var(--text-dim);
+  color: var(--text-muted);
   letter-spacing: 0.04em;
 }
 
@@ -153,6 +162,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  background: #ffffff;
 }
 
 .field-item {
@@ -169,10 +179,10 @@ body {
 
 .field-label {
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--text-muted);
+  color: var(--text-dim);
 }
 
 .field-hint {
@@ -186,23 +196,23 @@ body {
   align-items: center;
   gap: 5px;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 700;
   padding: 2px 7px;
   border-radius: 9999px;
   background: var(--emerald-bg);
-  color: var(--emerald);
-  border: 1px solid rgba(16, 185, 129, 0.25);
+  color: var(--emerald-text);
+  border: 1px solid var(--emerald-border);
 }
 
 .session-badge.detecting {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--bg-subtle);
   color: var(--text-dim);
   border-color: var(--border-subtle);
 }
 
 .session-badge.inactive {
   background: var(--amber-bg);
-  color: var(--amber);
+  color: var(--amber-text);
   border-color: var(--amber-border);
 }
 
@@ -233,8 +243,8 @@ select {
   width: 100%;
   appearance: none;
   padding: 9px 30px 9px 12px;
-  background: var(--bg-input);
-  border: 1px solid var(--border-subtle);
+  background: #ffffff;
+  border: 1px solid var(--border-mid);
   border-radius: 8px;
   font-size: 13px;
   font-weight: 600;
@@ -243,25 +253,27 @@ select {
   outline: none;
   cursor: pointer;
   transition: all 0.15s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
 }
 
 select:focus {
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+  box-shadow: 0 0 0 3px var(--primary-glow);
 }
 
 /* Text Input */
 .text-input {
   width: 100%;
   padding: 9px 12px;
-  background: var(--bg-input);
-  border: 1px solid var(--border-subtle);
+  background: #ffffff;
+  border: 1px solid var(--border-mid);
   border-radius: 8px;
   font-size: 13px;
   font-family: inherit;
   color: var(--text-main);
   outline: none;
   transition: all 0.15s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
 }
 
 .text-input::placeholder {
@@ -270,7 +282,7 @@ select:focus {
 
 .text-input:focus {
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+  box-shadow: 0 0 0 3px var(--primary-glow);
 }
 
 /* ── Primary CTA Button ─────────────────────────────────────────────────── */
@@ -281,21 +293,21 @@ select:focus {
   justify-content: center;
   gap: 8px;
   padding: 12px 16px;
-  background: linear-gradient(135deg, #2563eb 0%, #6366f1 100%);
+  background: var(--primary);
   color: #ffffff;
   border: none;
-  border-radius: 10px;
+  border-radius: 9px;
   font-size: 14px;
   font-weight: 700;
   font-family: inherit;
   letter-spacing: -0.01em;
   cursor: pointer;
-  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.35);
+  box-shadow: 0 4px 12px var(--primary-glow);
   transition: all 0.15s ease;
 }
 
 .primary-capture-btn:hover:not(:disabled) {
-  filter: brightness(1.1);
+  background: var(--primary-hover);
   transform: translateY(-1px);
 }
 
@@ -304,8 +316,8 @@ select:focus {
 }
 
 .primary-capture-btn:disabled {
-  background: #1e273d;
-  color: var(--text-dim);
+  background: #cbd5e1;
+  color: #94a3b8;
   box-shadow: none;
   cursor: not-allowed;
 }
@@ -322,44 +334,50 @@ select:focus {
   padding: 8px 12px;
   border-radius: 8px;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
   text-align: center;
   letter-spacing: 0.01em;
+  border: 1px solid transparent;
   transition: all 0.2s ease;
 }
 
 .process-badge.idle {
-  background: var(--bg-input);
+  background: var(--bg-subtle);
   color: var(--text-dim);
+  border-color: var(--border-subtle);
 }
 
 .process-badge.extracting,
 .process-badge.opening,
 .process-badge.generating,
 .process-badge.appending {
-  background: rgba(99, 102, 241, 0.15);
-  color: #a5b4fc;
+  background: #eef2ff;
+  color: #3730a3;
+  border-color: #c7d2fe;
 }
 
 .process-badge.success {
   background: var(--emerald-bg);
-  color: var(--emerald);
+  color: var(--emerald-text);
+  border-color: var(--emerald-border);
 }
 
 .process-badge.error,
 .process-badge.busy {
   background: var(--amber-bg);
-  color: var(--amber);
+  color: var(--amber-text);
+  border-color: var(--amber-border);
 }
 
 .error-banner {
   padding: 10px 12px;
   background: var(--amber-bg);
-  color: var(--amber);
+  color: var(--amber-text);
   border: 1px solid var(--amber-border);
   border-radius: 8px;
   font-size: 12px;
   line-height: 1.45;
+  font-weight: 500;
 }
 
 /* ── Actions Grid ───────────────────────────────────────────────────────── */
@@ -381,32 +399,42 @@ select:focus {
   justify-content: center;
   gap: 6px;
   padding: 9px 12px;
-  background: var(--bg-input);
-  border: 1px solid var(--border-subtle);
+  background: #ffffff;
+  border: 1px solid var(--border-mid);
   border-radius: 8px;
-  color: var(--text-muted);
+  color: var(--text-main);
   font-size: 12.5px;
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
   transition: all 0.15s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
 }
 
 .sub-action-btn svg {
   width: 15px;
   height: 15px;
+  color: var(--text-muted);
 }
 
 .sub-action-btn:hover {
   border-color: var(--primary);
-  color: #60a5fa;
+  color: var(--primary);
   background: var(--bg-hover);
+}
+
+.sub-action-btn:hover svg {
+  color: var(--primary);
 }
 
 .sub-action-btn--warn:hover {
   border-color: var(--amber);
-  color: var(--amber);
+  color: var(--amber-text);
   background: var(--amber-bg);
+}
+
+.sub-action-btn--warn:hover svg {
+  color: var(--amber);
 }
 
 /* Confirm Dialog */
@@ -422,8 +450,8 @@ select:focus {
 
 .confirm-msg {
   font-size: 12px;
-  color: var(--amber);
-  font-weight: 600;
+  color: var(--amber-text);
+  font-weight: 700;
 }
 
 .confirm-buttons-row {
@@ -435,7 +463,7 @@ select:focus {
   flex: 1;
   padding: 6px 10px;
   background: var(--amber);
-  color: #080c16;
+  color: #ffffff;
   border: none;
   border-radius: 6px;
   font-size: 12px;
@@ -446,8 +474,8 @@ select:focus {
 .btn-clear-no {
   flex: 1;
   padding: 6px 10px;
-  background: transparent;
-  color: var(--text-muted);
+  background: #ffffff;
+  color: var(--text-main);
   border: 1px solid var(--border-mid);
   border-radius: 6px;
   font-size: 12px;
@@ -461,12 +489,15 @@ select:focus {
   display: flex;
   justify-content: center;
   padding: 6px 16px 12px;
+  background: var(--bg-header);
+  border-top: 1px solid var(--border-subtle);
 }
 
 .footer-link {
   font-size: 11px;
   color: var(--text-dim);
   text-decoration: none;
+  font-weight: 500;
 }
 
 .footer-link:hover {

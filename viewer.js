@@ -55,19 +55,20 @@ $("brandLogoImg").addEventListener("error", () => {
 
 // ── Theme Switcher ───────────────────────────────────────────────────────────
 async function loadTheme() {
-  const { theme = "dark" } = await chrome.storage.local.get("theme");
+  const { theme = "light" } = await chrome.storage.local.get("theme");
   applyTheme(theme);
 }
 
 function applyTheme(t) {
   document.documentElement.setAttribute("data-theme", t);
+  // In light mode show moon icon (to switch to dark), in dark mode show sun icon (to switch to light)
   $("themeIconDark").classList.toggle("hidden", t === "light");
   $("themeIconLight").classList.toggle("hidden", t === "dark");
 }
 
 $("themeBtn").addEventListener("click", async () => {
-  const cur = document.documentElement.getAttribute("data-theme") || "dark";
-  const next = cur === "dark" ? "light" : "dark";
+  const cur = document.documentElement.getAttribute("data-theme") || "light";
+  const next = cur === "light" ? "dark" : "light";
   applyTheme(next);
   await chrome.storage.local.set({ theme: next });
 });
