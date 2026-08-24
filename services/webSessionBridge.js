@@ -526,8 +526,26 @@ async function getOrCreateSessionTab(cfg) {
   if (savedUrl) {
     const openTabs = await chrome.tabs.query({ url: `${savedUrl}*` });
     if (openTabs.length > 0) {
-      await chrome.tabs.update(openTabs[0].id, { autoDiscardable: false }).catch(() => {});
-      return { tab: openTabs[0], isNewChat: false };
+      let reused = openTabs[0];
+      await chrome.tabs.update(reused.id, { autoDiscardable: false }).catch(() => {});
+
+      if (reused.discarded) {
+        // Chrome unloaded this pinned tab's renderer to save memory (even
+        // with autoDiscardable:false — that only prevents FUTURE discards,
+        // it doesn't undo one already in effect from a prior session). Force
+        // it back to life and wait for it, otherwise the very first
+        // automation attempt races a not-yet-rendered page and script
+        // injection silently comes back with zero results instead of a
+        // helpful error — exactly what "No response captured" looks like.
+        await chrome.tabs.reload(reused.id).catch(() => {});
+        await waitForTabComplete(reused.id);
+        await new Promise((r) => setTimeout(r, 1000));
+        reused = await chrome.tabs.get(reused.id);
+      } else if (reused.status !== "complete") {
+        await waitForTabComplete(reused.id);
+      }
+
+      return { tab: reused, isNewChat: false };
     }
 
     try {
@@ -608,6 +626,9 @@ async function getNotesViaWebSession(provider, rawContent, topicOverride) {
         func: automateChatInPage,
         args: [cfg, promptText],
       });
+      if (!res.length) {
+        throw new Error("The tab reloaded or closed mid-automation — please try again.");
+      }
       return res[0]?.result;
     });
 
@@ -658,6 +679,9 @@ async function sendChatMessageViaWebSession(provider, userMessage, contextHistor
         func: automateChatInPage,
         args: [cfg, formattedPrompt],
       });
+      if (!res.length) {
+        throw new Error("The tab reloaded or closed mid-automation — please try again.");
+      }
       return res[0]?.result;
     });
 
