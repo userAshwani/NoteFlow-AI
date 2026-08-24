@@ -273,3 +273,43 @@ relieves the rendering/timer throttle as expected, and whether its info-bar/
 tab-strip indicator is as unobtrusive in practice as expected for a tab the
 user never looks at.
 
+---
+
+## 10. Follow-up (v6.4.0) — chrome.debugger reverted, confirmed not silent
+
+Live testing answered the open question from Section 9 immediately: the
+"started debugging this browser" banner does **not** stay confined to the
+debugged background tab — Chrome shows it on whichever tab is currently
+*active* (i.e. `viewer.html`, exactly what the user is looking at), and
+keeps it there for as long as any tab in that window is being debugged.
+This is a deliberate Chrome transparency measure (the same category of
+protection as the iframe cookie-partitioning and off-screen-window bounds
+check from Sections 8–9) and cannot be suppressed or scoped to a single tab.
+For a multi-second-to-2-minute generation window, that means a persistent,
+hard-to-miss banner sitting over the user's own workspace the entire time —
+a worse disruption than the tab-strip flash it was meant to replace.
+
+Reverted: `withDebuggerAttached()` removed, `debugger` permission removed
+from `manifest.json`. Back to `withBriefTabFocus()` alone (Section 8).
+
+Separately, the same test run surfaced a second, distinct symptom worth
+tracking: for the Claude provider, the actual `claude.ai` tab visibly
+finished generating a complete response, but NoteFlow's own dashboard
+stayed on the "Synthesizing…" skeleton rather than picking it up. Given the
+90-second-scale variability of these generations and that the screenshot
+doesn't establish how long the user had actually waited before checking,
+it's not yet confirmed whether this is a real bug in the observation loop /
+response selectors (e.g. Claude's `stopSelectors`/`responseSelectors` no
+longer matching its current DOM) versus simply not having reached the
+120-second `hardTimeout` yet. Needs a timed live re-test to distinguish
+the two before further changes are made here.
+
+All three "fully invisible" avenues attempted in this document (iframe,
+off-screen window, chrome.debugger) are now confirmed platform-blocked by
+independent, deliberate Chrome protections. `withBriefTabFocus()`'s brief
+same-window flash remains the only mechanism in this codebase's history
+that's actually been shown to reliably unlock the Send button without
+tripping one of those protections — the open question going forward is
+purely about the response-capture reliability described above, not about
+finding a fourth invisibility trick.
+
