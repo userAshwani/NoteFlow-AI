@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "NoteFlow AI: Smart Web Summarizer",
   "short_name": "NoteFlow AI",
-  "version": "6.2.0",
+  "version": "6.3.0",
   "description": "Silently extract & summarize any webpage into structured study notes via your logged-in Gemini, ChatGPT, Claude, Perplexity, or DeepSeek session — no API keys required. By ashwanitiwari.com.",
   "permissions": [
     "activeTab",
@@ -10,7 +10,8 @@
     "storage",
     "tabs",
     "cookies",
-    "declarativeNetRequest"
+    "declarativeNetRequest",
+    "debugger"
   ],
   "declarative_net_request": {
     "rule_resources": [

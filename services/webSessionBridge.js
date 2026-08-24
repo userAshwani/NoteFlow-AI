@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// services/webSessionBridge.js  v6.2
+// services/webSessionBridge.js  v6.3
 //
 // Background AI Engine:
 //  • Two "invisible" approaches were tried and both hit hard platform walls:
@@ -10,15 +10,22 @@
 //        window positioned mostly off-screen ("bounds must be at least 50%
 //        within visible screen space") — there is no way to make a real
 //        window invisible this way.
-//  • So the AI tab lives back in the user's own window, pinned & inactive —
-//    but Chromium ignores execCommand()/selection APIs in a tab whose window
-//    has never genuinely held OS focus, which is what disables the Send
-//    button until the user manually clicks into that tab. The fix proven
-//    reliable in earlier testing (see PROBLEM_ANALYSIS.md §5.3): flash real
-//    tab-strip focus onto the AI tab just long enough to fill the input and
-//    click Send, then immediately switch back to whatever tab the user was
-//    actually on. This causes a brief (sub-second) visible tab flicker —
-//    an explicit, accepted trade-off for reliability, not a bug.
+//  • The AI tab lives back in the user's own window, pinned & inactive. Two
+//    distinct Chromium background-tab behaviors get in the way of that:
+//      1. execCommand()/selection APIs are ignored in a tab whose window has
+//         never genuinely held OS focus — disables the Send button until
+//         the user manually clicks into the tab. Fixed with a brief
+//         (<1s) real tab-strip focus flash (withBriefTabFocus) just long
+//         enough to fill the input and click Send, then straight back to
+//         whatever tab the user was on.
+//      2. Independently, a background tab's own rendering/timers stay
+//         throttled for its whole lifetime — so even after Send is clicked,
+//         the streamed response may never get committed to the DOM until
+//         the tab becomes visible (this is what "only ever works after I
+//         click into that tab" looks like). Fixed with withDebuggerAttached:
+//         attaching the Chrome DevTools Protocol makes Chromium service that
+//         tab at full speed, the same way it does for a tab a developer has
+//         open DevTools on, without ever switching to it or touching focus.
 //  • Deep Angular/Quill (Gemini), Slate (ChatGPT), ProseMirror (Claude) DOM injection.
 //  • Anti-throttling & unthrottled MessageChannel observation loop.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -263,6 +270,19 @@ function automateChatInPage(cfg, promptText) {
       return [];
     }
 
+    // `.innerText` is layout-aware — reading it forces Chromium to run a
+    // reflow, which a backgrounded/non-visible tab can defer indefinitely.
+    // That's exactly why this used to sit "stuck" showing nothing until the
+    // user actually clicked into the AI tab (forcing that reflow) and back.
+    // `.textContent` reads straight from the DOM tree with no layout
+    // dependency, so it stays accurate even while this tab isn't active.
+    function readText(el) {
+      if (!el) return "";
+      const rendered = el.innerText;
+      if (rendered && rendered.trim().length > 0) return rendered.trim();
+      return (el.textContent || "").trim();
+    }
+
     // ── 1. Wait for input ────────────────────────────────────────────────
     let input = null;
     const inputDeadline = Date.now() + 25000;
@@ -386,7 +406,7 @@ function automateChatInPage(cfg, promptText) {
         const bubbles = queryAll(cfg.responseSelectors);
         const newBubbles = Array.from(bubbles).slice(existingBubbleCount);
         const last = newBubbles[newBubbles.length - 1];
-        const text = last?.innerText?.trim();
+        const text = readText(last);
         if (text) resolve(text);
         else {
           reject(
@@ -410,7 +430,7 @@ function automateChatInPage(cfg, promptText) {
         if (!newBubbles.length) return;
 
         const last = newBubbles[newBubbles.length - 1];
-        const text = last?.innerText?.trim() || "";
+        const text = readText(last);
 
         if (generationStarted && !stopEl && text.length > 10) {
           finish(text);
@@ -557,6 +577,36 @@ async function withBriefTabFocus(tab, func) {
   return resultPromise;
 }
 
+// Beyond the focus-gated input APIs above, Chromium separately throttles a
+// background tab's own rendering/timers — so even after Send is clicked,
+// the AI site's streamed response may not actually get committed to the DOM
+// until the tab becomes visible again (this is what "only works after I
+// click into that tab" looks like). Attaching the Chrome DevTools Protocol
+// to a tab makes Chromium service it at (near) full speed the way it would
+// for a tab a developer is actively inspecting, without ever switching to
+// it or stealing window focus — this is what actually keeps the AI tab
+// rendering/streaming normally while it sits pinned and inactive.
+async function withDebuggerAttached(tabId, func) {
+  let attached = false;
+  try {
+    await chrome.debugger.attach({ tabId }, "1.3");
+    attached = true;
+  } catch (err) {
+    // Another debugger (e.g. real DevTools) may already be attached to this
+    // tab, or the API may be unavailable — degrade gracefully rather than
+    // failing the whole generation over a best-effort optimization.
+    attached = false;
+  }
+
+  try {
+    return await func();
+  } finally {
+    if (attached) {
+      await chrome.debugger.detach({ tabId }).catch(() => {});
+    }
+  }
+}
+
 function tryRenameConversation(cfg, title) {
   try {
     for (const sel of cfg.titleSelectors || []) {
@@ -585,14 +635,16 @@ async function getNotesViaWebSession(provider, rawContent, topicOverride) {
   const promptText = buildPrompt(rawContent, topicOverride);
   let result;
   try {
-    result = await withBriefTabFocus(tab, async () => {
-      const res = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: automateChatInPage,
-        args: [cfg, promptText],
-      });
-      return res[0]?.result;
-    });
+    result = await withDebuggerAttached(tab.id, () =>
+      withBriefTabFocus(tab, async () => {
+        const res = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: automateChatInPage,
+          args: [cfg, promptText],
+        });
+        return res[0]?.result;
+      })
+    );
 
     if (isNewChat) {
       await chrome.scripting
@@ -635,14 +687,16 @@ async function sendChatMessageViaWebSession(provider, userMessage, contextHistor
 
   let result;
   try {
-    result = await withBriefTabFocus(tab, async () => {
-      const res = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: automateChatInPage,
-        args: [cfg, formattedPrompt],
-      });
-      return res[0]?.result;
-    });
+    result = await withDebuggerAttached(tab.id, () =>
+      withBriefTabFocus(tab, async () => {
+        const res = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: automateChatInPage,
+          args: [cfg, formattedPrompt],
+        });
+        return res[0]?.result;
+      })
+    );
 
     if (isNewChat) {
       await chrome.scripting

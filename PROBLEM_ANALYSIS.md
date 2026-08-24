@@ -227,3 +227,49 @@ for reasons discovered only through live testing, not fixable in code.
 this environment cannot run a browser to confirm the flash duration is
 sufficient in practice, or that no further edge case surfaces.
 
+---
+
+## 9. Follow-up (v6.3.0) — the flash alone wasn't enough
+
+Live testing of v6.2.0 showed the original symptom persisting: notes/chat
+only completed after the user manually clicked into the Gemini/ChatGPT tab
+and back, regardless of the focus flash. This revealed the flash only ever
+addressed **half** the problem — getting the Send button clickable. It did
+nothing for what happens *after*: Chromium independently throttles a
+background tab's own rendering and timers for its entire lifetime, so even
+once the AI starts streaming a response, the DOM may never actually get
+updated with it until the tab is genuinely visible again. That's a second,
+distinct root cause from the focus-gating one in Section 2.A.1, and no
+amount of extension-side DOM trickery changes it — it's Chromium's own
+scheduler deciding how much CPU/paint priority to give a page nobody is
+looking at.
+
+Two changes went in for this:
+
+1. **`readText()` helper** (`automateChatInPage`): response text was being
+   read via `.innerText`, which is layout-aware and can force a reflow a
+   throttled tab defers. Now falls back to `.textContent` (no layout
+   dependency) whenever `.innerText` comes back empty.
+2. **`withDebuggerAttached()`**: attaches the Chrome DevTools Protocol
+   (`chrome.debugger.attach`) to the AI tab for the duration of each
+   generation/chat call. A tab being actively debugged is serviced by
+   Chromium at (near) full speed — the same relief a developer gets by
+   leaving DevTools open on a background tab — without ever switching to it
+   or moving window focus. This targets the actual root cause of "only
+   works after I visit the tab" directly, rather than working around its
+   symptoms. Requires the new `debugger` permission in `manifest.json`,
+   which triggers extra Chrome Web Store review scrutiny and a more explicit
+   install-time permission warning — a one-time cost, not a recurring one.
+
+`withBriefTabFocus()` (Section 8) is kept and now runs *inside* the
+debugger-attached window, as a belt-and-suspenders measure in case the two
+throttling mechanisms (focus-gated input APIs vs. background rendering
+throttle) don't turn out to be fully resolved by the same fix.
+
+**Still needs live verification.** This is the first approach in this
+document with a real chance at the original "100% silent" requirement, but
+it is unverified — in particular whether `chrome.debugger.attach` actually
+relieves the rendering/timer throttle as expected, and whether its info-bar/
+tab-strip indicator is as unobtrusive in practice as expected for a tab the
+user never looks at.
+
