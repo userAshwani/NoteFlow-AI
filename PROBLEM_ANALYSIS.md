@@ -313,3 +313,73 @@ tripping one of those protections — the open question going forward is
 purely about the response-capture reliability described above, not about
 finding a fourth invisibility trick.
 
+---
+
+## 11. Live confirmation (v6.4.0 field test) — the Claude/response-capture
+symptom from Section 10 is real and reproducible, not a timeout artifact
+
+A live test run (2026-08-25) against Gemini and ChatGPT confirmed the
+Section 9/10 hypothesis directly, with screenshots:
+
+- **ChatGPT:** the session tab showed "Log in / Sign up for free" — not
+  actually signed in in that browser profile. NoteFlow correctly surfaced
+  "No response captured from ChatGPT Web. Please make sure you are signed
+  in." after the timeout. Not a bug — expected behavior for a logged-out
+  session.
+- **Gemini:** the prompt was sent successfully and Gemini answered
+  correctly in the background tab. NoteFlow's dashboard nonetheless sat on
+  the "Synthesizing…" skeleton indefinitely. The moment the user manually
+  clicked into the Gemini tab and back to the dashboard, the finished note
+  appeared **instantly** — no visible streaming, a single full commit. This
+  is decisive: Chromium was not merely throttling *timers* in that
+  background tab (which `MessageChannel` polling and `document.hidden`
+  spoofing target), it was withholding the actual **paint/DOM-commit**
+  entirely until the tab became visible, then flushing everything at once.
+  No amount of polling from inside that same suspended renderer can observe
+  a DOM that hasn't been written to yet.
+
+### v6.5 — dedicated per-provider window instead of a same-window tab
+
+The distinction this suggested, not previously tested: Chromium treats a
+tab as unconditionally "hidden" (`document.hidden === true`, rendering
+suspended) the instant it is not the *selected* tab of its window —
+independent of whether that window itself has OS focus. A window that is
+simply unfocused, but on-screen, uncovered, and not minimized, is not
+"occluded" in that same sense; its one active tab should in principle keep
+rendering at normal priority.
+
+- `getOrCreateSessionTab()` now opens each provider's session in its own
+  dedicated window (`chrome.windows.create({ focused: false, ... })`,
+  1000×780, on-screen — off-screen creation is still hard-blocked per
+  Section 8) instead of a pinned background tab in the user's own window.
+  `chrome.tabs.query({ url })` already searches across all windows, so
+  session-reuse detection needed no changes.
+- `withBriefTabFocus()` now flashes `chrome.windows.update(..., { focused:
+  true })` on the session window (not just `chrome.tabs.update(...,
+  { active: true })`) for the Send click, then restores focus to the
+  user's previous window/tab the same way as before.
+- Reused session tabs also get `chrome.windows.update(reused.windowId,
+  { state: "normal" })` in case the user minimized that window themselves
+  between runs, which would silently reintroduce the same throttling.
+
+**Caveat, unverified:** this only holds if the session window doesn't end
+up genuinely covered by the user's own browser window — most likely to
+work with a non-maximized main browser window, least guaranteed with a
+maximized one, since there's no remaining screen space to place a
+non-overlapping second window in that case. There is no way to confirm this
+without live testing on the user's actual screen/window layout, which this
+environment cannot do. If this still doesn't resolve the symptom, the next
+thing to check is whether the session window is in practice ending up
+behind/covered by the main window shortly after creation (in which case the
+occlusion-based throttling would reassert itself regardless of window
+focus), versus some other cause not yet identified.
+
+Separately, the send-registration path also got hardened in v6.5: after
+clicking Send (or pressing Enter), `automateChatInPage` now checks within
+~2.5s whether the send actually took (stop indicator appears / a new
+response bubble appears / the input clears), retries once with the other
+method if not, and throws a fast, specific error otherwise — instead of
+silently sitting through the full 120s timeout when a click never registers
+with the page's own framework state. This is a distinct fix from the
+window-per-provider change above; both landed in the same pass.
+
