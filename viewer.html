@@ -76,6 +76,20 @@
           <span>Copy All</span>
         </button>
 
+        <button id="docxSyncBtn" class="action-pill" title="Auto-save notes to a .docx file on your computer">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M6 2h6l4 4v12H6V2z"/>
+            <path d="M12 2v4h4"/>
+            <path d="M8 12h4M8 15h4"/>
+          </svg>
+          <span id="docxSyncLabel">Connect DOCX</span>
+        </button>
+        <button id="docxDisconnectBtn" class="action-pill action-pill--icon hidden" title="Disconnect DOCX auto-save">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M5 5l10 10M15 5L5 15"/>
+          </svg>
+        </button>
+
         <button id="clearAllBtn" class="action-pill action-pill--danger" title="Clear All Saved Notes">
           <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M4 6h12M8 6V4a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v2M5 6l1 11a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-11"/>
@@ -386,6 +400,7 @@
   <!-- ── Notification Toast ──────────────────────────────────────────────── -->
   <div id="toast" class="floating-toast hidden"></div>
 
+  <script src="services/docxSync.js"></script>
   <script src="viewer.js"></script>
 </body>
 </html>

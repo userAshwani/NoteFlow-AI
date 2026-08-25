@@ -994,6 +994,90 @@ $("clearChatBtn").addEventListener("click", () => {
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
+// 3B. DOCX AUTO-SAVE SYNC
+//
+// A real .docx (OOXML) file, kept up to date automatically as notes are
+// captured. Chrome can't silently write to an arbitrary filesystem path —
+// the user picks the save location once via a native file picker
+// (docxSyncBtn), and every subsequent note completion silently rewrites the
+// full document to that same location for as long as the browser keeps the
+// write permission granted. See services/docxSync.js for the actual
+// picker/ZIP/OOXML logic — this section just wires it into the UI.
+// ═════════════════════════════════════════════════════════════════════════════
+
+async function refreshDocxButton() {
+  const status = await window.NoteFlowDocx.getStatus();
+  const label = $("docxSyncLabel");
+  const btn = $("docxSyncBtn");
+  const disconnectBtn = $("docxDisconnectBtn");
+
+  if (!status.connected) {
+    label.textContent = "Connect DOCX";
+    btn.title = "Auto-save notes to a .docx file on your computer";
+    btn.classList.remove("action-pill--accent");
+    disconnectBtn.classList.add("hidden");
+    return;
+  }
+
+  disconnectBtn.classList.remove("hidden");
+
+  if (status.permission === "granted") {
+    label.textContent = `Synced: ${status.name}`;
+    btn.title = `Auto-saving to ${status.name}. Click to sync now.`;
+    btn.classList.add("action-pill--accent");
+  } else {
+    label.textContent = "Reconnect DOCX";
+    btn.title = `Lost write access to ${status.name}. Click to reconnect.`;
+    btn.classList.remove("action-pill--accent");
+  }
+}
+
+$("docxSyncBtn").addEventListener("click", async () => {
+  const status = await window.NoteFlowDocx.getStatus();
+
+  try {
+    if (!status.connected || status.permission !== "granted") {
+      await window.NoteFlowDocx.connect();
+      showToast("📄 DOCX connected — syncing existing notes…");
+    }
+    const res = await window.NoteFlowDocx.sync(_currentNotesList);
+    if (res.ok) {
+      showToast(`📄 Synced ${res.count} note${res.count === 1 ? "" : "s"} to ${res.name}`);
+    } else if (res.reason !== "no-handle") {
+      showToast("⚠ Could not write the DOCX file — check its permissions and try again.");
+    }
+  } catch (err) {
+    if (err?.name !== "AbortError") {
+      showToast("⚠ DOCX connect failed: " + err.message);
+    }
+  } finally {
+    await refreshDocxButton();
+  }
+});
+
+$("docxDisconnectBtn").addEventListener("click", async (e) => {
+  e.stopPropagation();
+  await window.NoteFlowDocx.disconnect();
+  showToast("DOCX auto-save disconnected");
+  await refreshDocxButton();
+});
+
+async function maybeAutoSyncDocx(notesList) {
+  const status = await window.NoteFlowDocx.getStatus();
+  if (!status.connected || !status.enabled) return;
+
+  const res = await window.NoteFlowDocx.sync(notesList);
+  if (res.ok) {
+    await refreshDocxButton();
+  } else if (res.reason === "permission") {
+    // Silent writes need a previously-granted permission; if it's gone,
+    // just reflect that in the button rather than interrupting the user —
+    // they can click "Reconnect DOCX" whenever convenient.
+    await refreshDocxButton();
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // 4. STORAGE LISTENERS & EXPORT ACTIONS
 // ═════════════════════════════════════════════════════════════════════════════
 
@@ -1004,6 +1088,7 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
     const after = changes.notesList.newValue || [];
     await syncNotesToDOM(after);
     _currentNotesList = after;
+    await maybeAutoSyncDocx(after);
   }
 
   if (changes.pinnedNoteIds) {
@@ -1262,6 +1347,8 @@ async function init() {
   const { notesList = [] } = await chrome.storage.local.get("notesList");
   _currentNotesList = notesList;
   await renderAllNotes(notesList);
+
+  await refreshDocxButton();
 }
 
 init();
