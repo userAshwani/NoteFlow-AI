@@ -60,13 +60,56 @@
           <span>Flashcards</span>
         </button>
 
-        <button id="exportHtmlBtn" class="action-pill" title="Export as Standalone HTML">
-          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M10 3v10M6 9l4 4 4-4"/>
-            <path d="M4 16h12"/>
-          </svg>
-          <span>Export</span>
-        </button>
+        <div class="export-wrap">
+          <button id="exportBtn" class="action-pill" title="Export notes" aria-haspopup="true" aria-expanded="false">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M10 3v10M6 9l4 4 4-4"/>
+              <path d="M4 16h12"/>
+            </svg>
+            <span>Export</span>
+            <svg class="export-caret" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M6 8l4 4 4-4"/>
+            </svg>
+          </button>
+
+          <div id="exportMenu" class="export-menu hidden" role="menu">
+            <button class="export-item" data-export="pdf" role="menuitem">
+              <span class="export-item-icon">🖨</span>
+              <span class="export-item-body">
+                <span class="export-item-title">Print / Save as PDF</span>
+                <span class="export-item-sub">Opens the browser print dialog</span>
+              </span>
+            </button>
+            <button class="export-item" data-export="docx" role="menuitem">
+              <span class="export-item-icon">📄</span>
+              <span class="export-item-body">
+                <span class="export-item-title">Word Document (.docx)</span>
+                <span class="export-item-sub">Full colour formatting</span>
+              </span>
+            </button>
+            <button class="export-item" data-export="html" role="menuitem">
+              <span class="export-item-icon">🌐</span>
+              <span class="export-item-body">
+                <span class="export-item-title">Standalone HTML</span>
+                <span class="export-item-sub">Self-contained web page</span>
+              </span>
+            </button>
+            <button class="export-item" data-export="md" role="menuitem">
+              <span class="export-item-icon">📝</span>
+              <span class="export-item-body">
+                <span class="export-item-title">Markdown (.md)</span>
+                <span class="export-item-sub">For Obsidian, Notion, GitHub</span>
+              </span>
+            </button>
+            <button class="export-item" data-export="json" role="menuitem">
+              <span class="export-item-icon">{ }</span>
+              <span class="export-item-body">
+                <span class="export-item-title">JSON backup</span>
+                <span class="export-item-sub">Raw data, re-importable</span>
+              </span>
+            </button>
+          </div>
+        </div>
 
         <button id="copyAllBtn" class="action-pill" title="Copy Complete Document">
           <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">

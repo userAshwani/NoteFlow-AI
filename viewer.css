@@ -1850,3 +1850,200 @@ body {
     padding: 0;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   EXPORT DROPDOWN MENU
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.export-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.export-caret {
+  width: 13px;
+  height: 13px;
+  margin-left: -2px;
+  opacity: 0.65;
+  transition: transform 0.18s ease;
+}
+
+.export-wrap.open .export-caret {
+  transform: rotate(180deg);
+}
+
+.export-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 120;
+  width: 288px;
+  padding: 6px;
+  background: var(--bg-surface, #fff);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-float);
+  animation: exportMenuIn 0.14s ease-out;
+}
+
+@keyframes exportMenuIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.export-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 9px 10px;
+  border: none;
+  border-radius: var(--radius-btn);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.export-item:hover {
+  background: var(--indigo-subtle);
+}
+
+.export-item-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--bg-elevated, var(--indigo-subtle));
+  border: 1px solid var(--border-subtle);
+  font-size: 13px;
+  color: var(--indigo-text);
+}
+
+.export-item-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.export-item-title {
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--text-main);
+}
+
+.export-item-sub {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PRINT / SAVE AS PDF
+   Strips the app chrome so the printed sheet is just the notes document.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@media print {
+  .app-topbar,
+  .app-sidebar,
+  .stream-right-tools,
+  .confirm-alert-bar,
+  .card-action-bar,
+  .btn-copy-code,
+  .export-menu,
+  .toast-container,
+  #searchHint,
+  #chatWorkspace,
+  .skeleton-card {
+    display: none !important;
+  }
+
+  html, body {
+    background: #fff !important;
+  }
+
+  .app-container {
+    display: block !important;
+    max-width: 100% !important;
+  }
+
+  .app-main {
+    padding: 0 !important;
+  }
+
+  .note-card {
+    box-shadow: none !important;
+    border: 1px solid #e2e8f0 !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+    margin-bottom: 18px !important;
+  }
+
+  .code-block-wrap,
+  .code-block-body {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* Force the light palette so printed output isn't a dark rectangle. */
+  :root, [data-theme="dark"] {
+    --bg-page: #fff;
+    --bg-surface: #fff;
+    --text-main: #0f172a;
+    --text-body: #1e293b;
+    --text-muted: #475569;
+    --border-subtle: #e2e8f0;
+  }
+
+  @page {
+    margin: 14mm;
+  }
+}
+
+/* ── No search results state ─────────────────────────────────────────────── */
+
+.no-results-card {
+  text-align: center;
+  padding: 48px 24px;
+  background: var(--bg-card);
+  border: 1px dashed var(--border-mid);
+  border-radius: var(--radius-card);
+}
+
+.no-results-emoji {
+  font-size: 30px;
+  margin-bottom: 10px;
+  opacity: 0.85;
+}
+
+.no-results-title {
+  font-size: 16px;
+  font-weight: 750;
+  color: var(--text-main);
+  margin-bottom: 6px;
+}
+
+.no-results-sub {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 16px;
+}
+
+.no-results-reset {
+  padding: 8px 16px;
+  border: 1px solid var(--primary);
+  border-radius: var(--radius-btn);
+  background: var(--primary);
+  color: #fff;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.no-results-reset:hover {
+  background: var(--primary-hover);
+}

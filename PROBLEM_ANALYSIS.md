@@ -383,3 +383,95 @@ silently sitting through the full 120s timeout when a click never registers
 with the page's own framework state. This is a distinct fix from the
 window-per-provider change above; both landed in the same pass.
 
+
+---
+
+## 12. v6.6 — root cause found for "every provider except Gemini fails",
+plus real single-session reuse
+
+Two separate defects, both found by code inspection rather than by more
+throttling theory. Neither is a platform limitation — both were ordinary
+bugs in this codebase.
+
+### A. `TypeError: Illegal invocation` killed all four non-Gemini providers
+
+`automateChatInPage`'s input-fill step branched like this:
+
+```js
+if (input.tagName === "TEXTAREA" || input.tagName === "INPUT" || input.id === "prompt-textarea") {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+  setter.call(input, promptText);   // <-- throws when `input` is a DIV
+```
+
+ChatGPT's `#prompt-textarea` has not been a `<textarea>` for a long time —
+it is a contenteditable **ProseMirror div**. Calling the
+`HTMLTextAreaElement.prototype.value` setter on a div throws
+`TypeError: Illegal invocation` immediately, so the injected script died
+before typing a single character. The same branch also used the *textarea*
+setter for genuine `<input>` elements, which throws for the same reason.
+
+Gemini was unaffected only because it matched branch B (Quill) instead —
+which is exactly why Gemini was "the one that works".
+
+Fixed by branching on the real element type (`tagName` only), using the
+matching prototype for `<input>` vs `<textarea>`, and giving contenteditable
+editors their own path: a synthetic `paste` event carrying a real
+`DataTransfer`. ProseMirror/Slate/Lexical all implement paste natively and
+update their internal document model from it — unlike `innerHTML`, which
+leaves the model empty so the framework keeps Send disabled. `execCommand
+("insertText")` remains as a fallback.
+
+### B. The composer URL was being saved as the "active chat"
+
+The session was persisted with:
+
+```js
+if (finalTab.url?.startsWith(cfg.hostPattern)) {   // hostPattern = "https://chatgpt.com/"
+  chrome.storage.local.set({ [cfg.sessionStorageKey]: finalTab.url });
+```
+
+`https://chatgpt.com/` — the **new-chat composer** — trivially satisfies
+`startsWith("https://chatgpt.com/")`. So any run that failed, or that read
+the URL before the SPA had rewritten it, stored the composer as if it were
+a conversation. The next run "reused" that URL, landed on the composer,
+and created yet another chat — the pile of one-message conversations the
+user reported.
+
+Fixed with a per-provider `conversationUrlPattern` (Gemini `/app/<id>`,
+ChatGPT `/c|/uc|/g/../c/<uuid>`, Claude `/chat/<uuid>`, Perplexity
+`/search/<slug>`, DeepSeek `/a/chat/s/<uuid>`). Only a URL matching it is
+ever written; a bad value never overwrites a good one; a stored value that
+isn't a conversation URL is discarded on read; and a reopened conversation
+that redirected to the composer (deleted/signed-out) is detected instead of
+being treated as a successful reuse. `persistSessionUrl()` also polls a few
+seconds for the SPA's `history.pushState` to land, since these apps rewrite
+the URL shortly *after* accepting the first message.
+
+Notes and the Multi-AI Chat Hub intentionally share one conversation per
+provider, so both now continue the same thread.
+
+### C. Two smaller fixes in the same pass
+
+- **`chrome.tabs.query({ url })` takes a match pattern**, which may not
+  contain a query string or fragment. The old code passed the raw saved URL
+  plus `"*"`; for a Perplexity URL (`/search/slug?0=...`) that throws
+  "Invalid url pattern" and took down the whole run. Now built from
+  `origin + pathname` only, and wrapped.
+- **`Frame with ID 0 was removed`** (seen live on ChatGPT) is Chrome tearing
+  down the target frame mid-injection — what a provider does when it swaps
+  the composer route for the real conversation route on a first message.
+  `runAutomation()` now catches that specific class of error and, if the tab
+  settled on a conversation URL, scrapes the already-sent message's response
+  rather than re-sending it; otherwise it retries the send once.
+- Response bubbles are now counted **per selector** (`countsBySelector` /
+  `newestNewBubble`) instead of "first selector with any matches". With a
+  long-lived reused conversation the before-count and after-list could come
+  from different selectors, slicing off the wrong number of pre-existing
+  bubbles.
+
+**Verification status:** the URL/session logic is covered by a local test
+run (all conversation-URL and match-pattern cases pass). The DOM-side fixes
+(A, and the frame-removed recovery) are code-review-level only — this
+environment has no browser, so they need a live run against each signed-in
+provider to confirm. The Section 11 background-rendering caveat is
+unchanged and independent of these bugs.

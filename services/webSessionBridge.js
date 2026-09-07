@@ -38,11 +38,18 @@
 //  • Anti-throttling & unthrottled MessageChannel observation loop.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// `conversationUrlPattern` is what makes single-session reuse actually work.
+// A provider's base/composer URL (e.g. https://chatgpt.com/) is NOT a
+// conversation — persisting it as the "active chat" is what caused a brand
+// new chat to be spawned on every run. Only a URL matching this pattern is
+// ever saved as the reusable session, and only such a URL is trusted when
+// restoring one.
 const PROVIDERS = {
   "gemini-web": {
     label: "Gemini Web",
     baseUrl: "https://gemini.google.com/app",
     hostPattern: "https://gemini.google.com/",
+    conversationUrlPattern: /^https:\/\/gemini\.google\.com\/app\/[0-9a-zA-Z_-]{6,}/,
     sessionStorageKey: "geminiActiveChatUrl",
     cookieDomain: "google.com",
     inputSelectors: [
@@ -85,17 +92,22 @@ const PROVIDERS = {
     label: "ChatGPT Web",
     baseUrl: "https://chatgpt.com/",
     hostPattern: "https://chatgpt.com/",
+    // /c/<uuid> when signed in, /uc/<uuid> for a logged-out temporary chat,
+    // /g/<id>/c/<uuid> inside a GPT.
+    conversationUrlPattern: /^https:\/\/chatgpt\.com\/(?:g\/[^/]+\/)?u?c\/[0-9a-fA-F-]{8,}/,
     sessionStorageKey: "chatgptActiveChatUrl",
     cookieDomain: "chatgpt.com",
     inputSelectors: [
+      "div[contenteditable='true']#prompt-textarea",
       "#prompt-textarea",
-      "div[contenteditable='true'][id='prompt-textarea']",
+      "div.ProseMirror[contenteditable='true']",
       "div[contenteditable='true']",
       "textarea[data-id='root']",
       "textarea",
     ],
     sendSelectors: [
       "button[data-testid='send-button']",
+      "#composer-submit-button",
       "button[aria-label='Send prompt']",
       "button[aria-label*='Send' i]",
       "button[aria-label='Submit']",
@@ -122,26 +134,33 @@ const PROVIDERS = {
     label: "Claude Web",
     baseUrl: "https://claude.ai/new",
     hostPattern: "https://claude.ai/",
+    conversationUrlPattern: /^https:\/\/claude\.ai\/chat\/[0-9a-fA-F-]{8,}/,
     sessionStorageKey: "claudeActiveChatUrl",
     cookieDomain: "claude.ai",
     inputSelectors: [
       "div[contenteditable='true'].ProseMirror",
       "div[contenteditable='true'][data-placeholder]",
+      "fieldset div[contenteditable='true']",
       "div[contenteditable='true']",
     ],
+    // Attribute-value matching is case-sensitive in CSS, and Claude has
+    // shipped both "Send message" and "Send Message" — the `i` flag variants
+    // cover either spelling.
     sendSelectors: [
-      "button[aria-label='Send Message']",
+      "button[aria-label='Send message' i]",
       "button[data-testid='send-button']",
       "button[aria-label*='Send' i]",
     ],
     stopSelectors: [
-      "button[aria-label='Stop Response']",
+      "button[aria-label='Stop response' i]",
       "button[aria-label*='Stop' i]",
+      "button[data-testid='stop-button']",
     ],
     responseSelectors: [
+      "[data-testid='conversation-turn-assistant'] .font-claude-message",
       ".font-claude-message",
       "[data-is-streaming] .prose",
-      ".prose",
+      "div.font-claude-response",
     ],
     titleSelectors: [
       "nav [aria-current='page'] span",
@@ -152,25 +171,33 @@ const PROVIDERS = {
     label: "Perplexity AI",
     baseUrl: "https://www.perplexity.ai/",
     hostPattern: "https://www.perplexity.ai/",
+    conversationUrlPattern: /^https:\/\/www\.perplexity\.ai\/search\/[^/?#]+/,
     sessionStorageKey: "perplexityActiveChatUrl",
     cookieDomain: "perplexity.ai",
+    // Perplexity moved its composer from a <textarea> to a contenteditable
+    // div (#ask-input); the textarea entries are kept as fallbacks for
+    // older/alternate builds.
     inputSelectors: [
+      "div[contenteditable='true']#ask-input",
+      "#ask-input",
+      "div[contenteditable='true'][role='textbox']",
+      "div[contenteditable='true']",
       "textarea[placeholder*='Ask' i]",
-      "textarea.overflow-auto",
       "textarea",
     ],
     sendSelectors: [
-      "button[aria-label='Submit']",
       "button[data-testid='submit-button']",
+      "button[aria-label='Submit' i]",
+      "button[aria-label*='Submit' i]",
       "button[type='submit']",
     ],
     stopSelectors: [
-      "button[aria-label='Stop']",
+      "button[aria-label='Stop' i]",
       "button[aria-label*='Stop' i]",
     ],
     responseSelectors: [
-      ".prose",
       "[data-testid='answer-text']",
+      ".prose",
       ".answer-text",
     ],
     titleSelectors: [
@@ -182,17 +209,23 @@ const PROVIDERS = {
     label: "DeepSeek Web",
     baseUrl: "https://chat.deepseek.com/",
     hostPattern: "https://chat.deepseek.com/",
+    conversationUrlPattern: /^https:\/\/chat\.deepseek\.com\/a\/chat\/s\/[0-9a-fA-F-]{8,}/,
     sessionStorageKey: "deepseekActiveChatUrl",
     cookieDomain: "chat.deepseek.com",
     inputSelectors: [
       "textarea#chat-input",
       "textarea[placeholder*='message' i]",
       "textarea",
+      "div[contenteditable='true']",
     ],
+    // DeepSeek's send control is an unlabelled obfuscated-class <div
+    // role=button>, so there's often nothing stable to match — the Enter-key
+    // fallback in automateChatInPage is the real submission path here.
     sendSelectors: [
       "div[role='button'][aria-label*='Send' i]",
       "button[aria-label*='Send' i]",
       "button[type='submit']",
+      "div[role='button'][aria-disabled='false']",
     ],
     stopSelectors: [
       "div[role='button'][aria-label*='Stop' i]",
@@ -278,6 +311,31 @@ function automateChatInPage(cfg, promptText) {
       return [];
     }
 
+    // Counting bubbles with whichever selector happens to match first is
+    // unsafe once we reuse one long-lived conversation (the normal case now):
+    // the "before" count could come from one selector and the "after" list
+    // from another, so slicing off the pre-existing bubbles would cut the
+    // wrong number. Snapshot a count PER selector instead, then afterwards
+    // use the first selector that actually grew — the counts always line up.
+    function countsBySelector(selectors) {
+      const counts = {};
+      for (const sel of selectors) counts[sel] = document.querySelectorAll(sel).length;
+      return counts;
+    }
+
+    // Returns the newest bubble that appeared after `baseline`, or null.
+    function newestNewBubble(selectors, baseline) {
+      for (const sel of selectors) {
+        const els = document.querySelectorAll(sel);
+        if (els.length > (baseline[sel] ?? 0)) return els[els.length - 1];
+      }
+      return null;
+    }
+
+    function anyNewBubble(selectors, baseline) {
+      return !!newestNewBubble(selectors, baseline);
+    }
+
     // `.innerText` is layout-aware — reading it forces Chromium to run a
     // reflow, which a backgrounded/non-visible tab can defer indefinitely.
     // That's exactly why this used to sit "stuck" showing nothing until the
@@ -305,20 +363,28 @@ function automateChatInPage(cfg, promptText) {
       );
     }
 
-    // ── 2. Snapshot existing response count BEFORE sending ───────────────
-    const existingBubbleCount = queryAll(cfg.responseSelectors).length;
+    // ── 2. Snapshot existing response counts BEFORE sending ──────────────
+    const baselineCounts = countsBySelector(cfg.responseSelectors);
 
     // ── 3. Fill input with full event propagation ────────────────────────
     input.focus();
     input.dispatchEvent(new FocusEvent("focus", { bubbles: true, composed: true }));
     input.dispatchEvent(new FocusEvent("focusin", { bubbles: true, composed: true }));
 
-    // A. Textarea / Input element (ChatGPT / Perplexity / DeepSeek)
-    if (input.tagName === "TEXTAREA" || input.tagName === "INPUT" || input.id === "prompt-textarea") {
-      const setter = Object.getOwnPropertyDescriptor(
-        window.HTMLTextAreaElement.prototype,
-        "value"
-      )?.set;
+    // Branch strictly on the ACTUAL element type. The previous version also
+    // routed anything with id="prompt-textarea" down the <textarea> path —
+    // but ChatGPT's #prompt-textarea is a contenteditable ProseMirror DIV,
+    // and calling the HTMLTextAreaElement value setter on a div throws
+    // "TypeError: Illegal invocation", which aborted the whole automation
+    // before a single keystroke landed. That was the actual reason every
+    // non-Gemini provider failed.
+    const isFormField = input.tagName === "TEXTAREA" || input.tagName === "INPUT";
+    const isQuill = !isFormField && (input.classList.contains("ql-editor") || !!input.closest("rich-textarea"));
+
+    // A. Real <textarea> / <input> (DeepSeek, older Perplexity builds)
+    if (isFormField) {
+      const proto = input.tagName === "TEXTAREA" ? window.HTMLTextAreaElement : window.HTMLInputElement;
+      const setter = Object.getOwnPropertyDescriptor(proto.prototype, "value")?.set;
       if (setter) setter.call(input, promptText);
       else input.value = promptText;
 
@@ -333,8 +399,8 @@ function automateChatInPage(cfg, promptText) {
         })
       );
     }
-    // B. Quill / Rich Textarea (Gemini Web)
-    else if (input.classList.contains("ql-editor") || input.closest("rich-textarea")) {
+    // B. Quill / Rich Textarea (Gemini Web) — proven working, left as-is.
+    else if (isQuill) {
       const paragraphs = promptText
         .split("\n")
         .filter(Boolean)
@@ -353,12 +419,54 @@ function automateChatInPage(cfg, promptText) {
         host.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
       }
     }
-    // C. Contenteditable / ProseMirror (Claude / Other)
+    // C. Contenteditable rich editors — ProseMirror (ChatGPT, Claude),
+    //    Lexical/Slate (Perplexity and friends).
+    //
+    //    These keep their own internal document model; writing .innerHTML
+    //    directly leaves that model empty, so the framework still believes
+    //    the composer is blank and keeps Send disabled. A synthetic paste
+    //    with real clipboard data is the one path all of them implement
+    //    natively (they all support pasting text), so it updates the model
+    //    properly. execCommand("insertText") is kept as a fallback for any
+    //    editor that ignores programmatic paste.
     else {
-      input.innerHTML = `<p>${promptText.replace(/\n/g, "<br>")}</p>`;
-      document.execCommand("selectAll", false, null);
-      document.execCommand("insertText", false, promptText);
-      input.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, data: promptText }));
+      // Clear whatever is there via the editor's own selection machinery.
+      const range = document.createRange();
+      range.selectNodeContents(input);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+
+      let inserted = false;
+      try {
+        const dt = new DataTransfer();
+        dt.setData("text/plain", promptText);
+        const pasteEvent = new ClipboardEvent("paste", {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          clipboardData: dt,
+        });
+        input.dispatchEvent(pasteEvent);
+        // If the editor handled the paste, its model now has our text.
+        inserted = (input.innerText || input.textContent || "").trim().length > 0;
+      } catch {
+        /* fall through to execCommand */
+      }
+
+      if (!inserted) {
+        document.execCommand("selectAll", false, null);
+        document.execCommand("insertText", false, promptText);
+      }
+
+      input.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          composed: true,
+          data: promptText,
+          inputType: "insertText",
+        })
+      );
       input.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
     }
 
@@ -409,16 +517,18 @@ function automateChatInPage(cfg, promptText) {
     // with the other input method before committing to the long wait, so a
     // genuine failure surfaces in seconds instead of two minutes.
     function hasUnsentText() {
-      const val = "value" in input ? input.value : "";
-      const live = (val || input.innerText || input.textContent || "").trim();
-      return live.length > 0;
+      // For a real form field only `.value` is meaningful — `.innerText` on a
+      // <textarea> returns its original default content, not what's typed
+      // now, which would make a successful send look like a failed one.
+      if (isFormField) return (input.value || "").trim().length > 0;
+      return (input.innerText || input.textContent || "").trim().length > 0;
     }
 
     async function sendRegistered() {
       const checkDeadline = Date.now() + 2500;
       while (Date.now() < checkDeadline) {
         if (query(cfg.stopSelectors)) return true;
-        if (queryAll(cfg.responseSelectors).length > existingBubbleCount) return true;
+        if (anyNewBubble(cfg.responseSelectors, baselineCounts)) return true;
         if (!hasUnsentText()) return true; // most UIs clear the input on successful send
         await sleep(200);
       }
@@ -460,10 +570,7 @@ function automateChatInPage(cfg, promptText) {
         if (done) return;
         done = true;
         mo.disconnect();
-        const bubbles = queryAll(cfg.responseSelectors);
-        const newBubbles = Array.from(bubbles).slice(existingBubbleCount);
-        const last = newBubbles[newBubbles.length - 1];
-        const text = readText(last);
+        const text = readText(newestNewBubble(cfg.responseSelectors, baselineCounts));
         if (text) resolve(text);
         else {
           reject(
@@ -482,11 +589,9 @@ function automateChatInPage(cfg, promptText) {
         const stopEl = query(cfg.stopSelectors);
         if (stopEl) generationStarted = true;
 
-        const bubbles = queryAll(cfg.responseSelectors);
-        const newBubbles = Array.from(bubbles).slice(existingBubbleCount);
-        if (!newBubbles.length) return;
+        const last = newestNewBubble(cfg.responseSelectors, baselineCounts);
+        if (!last) return;
 
-        const last = newBubbles[newBubbles.length - 1];
         const text = readText(last);
 
         if (generationStarted && !stopEl && text.length > 10) {
@@ -609,16 +714,128 @@ function waitForTabComplete(tabId, timeoutMs = 30000) {
 // a real, visible (if unobtrusive) second window, not an invisible one.
 const SESSION_WINDOW_SIZE = { width: 1000, height: 780 };
 
+// chrome.windows.create resolves with the Window, but `tabs` is only
+// populated on success and can come back empty if the window was torn down
+// immediately. Reading `win.tabs[0]` blind throws an opaque TypeError that
+// surfaced to the user as a generic "Automation failed" with no clue why.
+async function createSessionWindow(url) {
+  const win = await chrome.windows.create({
+    url,
+    focused: false,
+    type: "normal",
+    ...SESSION_WINDOW_SIZE,
+  });
+  const tab = win?.tabs?.[0];
+  if (!tab?.id) {
+    throw new Error(
+      "Chrome did not return a usable tab for the AI session window. " +
+        "Check that pop-up windows aren't being blocked, then try again."
+    );
+  }
+  return tab;
+}
+
+function isConversationUrl(cfg, url) {
+  if (!url) return false;
+  if (cfg.conversationUrlPattern) return cfg.conversationUrlPattern.test(url);
+  // No pattern configured — fall back to "at least not the composer".
+  return url.startsWith(cfg.hostPattern) && url !== cfg.baseUrl;
+}
+
+// chrome.tabs.query takes a MATCH PATTERN, which may not contain a query
+// string or fragment — passing a raw saved URL like
+// ".../search/foo?bar=1" throws "Invalid url pattern" and took the whole
+// pipeline down with it. Build a legal pattern from origin + path only.
+function toMatchPattern(url) {
+  try {
+    const u = new URL(url);
+    return `${u.origin}${u.pathname}*`;
+  } catch {
+    return null;
+  }
+}
+
+async function findTabByUrl(url) {
+  const pattern = toMatchPattern(url);
+  if (!pattern) return null;
+  try {
+    const tabs = await chrome.tabs.query({ url: pattern });
+    return tabs[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+// Persist the conversation this run ended up in, so every later run continues
+// inside that same chat instead of spawning a new one.
+//
+// The previous version saved any URL under the provider's host — including
+// the new-chat composer itself (e.g. "https://chatgpt.com/"). That poisoned
+// the stored session: the next run "reused" a URL that is really just the
+// composer, sent there, and created yet another chat — the endless pile of
+// one-message conversations. Now only a URL matching the provider's
+// conversation pattern is ever written, and a bad value never overwrites a
+// good one.
+//
+// The URL is also polled for a few seconds: these SPAs rewrite it via
+// history.pushState shortly AFTER the first message is accepted, so reading
+// it immediately often still returns the composer URL.
+async function persistSessionUrl(cfg, tabId) {
+  const readUrl = async () => {
+    try {
+      return (await chrome.tabs.get(tabId)).url;
+    } catch {
+      return null; // tab closed — keep whatever was stored before
+    }
+  };
+
+  // Fast path: already sitting in a conversation (the normal reuse case).
+  const current = await readUrl();
+  if (current === null) return;
+  if (isConversationUrl(cfg, current)) {
+    await chrome.storage.local.set({ [cfg.sessionStorageKey]: current });
+    return;
+  }
+
+  // Not a conversation URL yet. If a good one is already stored, there's
+  // nothing to learn here — don't stall the caller (this also runs on the
+  // failure path, where waiting would just delay the error the user sees).
+  const stored = await chrome.storage.local.get(cfg.sessionStorageKey);
+  if (isConversationUrl(cfg, stored[cfg.sessionStorageKey])) return;
+
+  // Genuinely a brand-new chat: the SPA rewrites the URL via history
+  // .pushState shortly after the first message is accepted, so give it a
+  // few seconds to settle before giving up.
+  const deadline = Date.now() + 8000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 500));
+    const url = await readUrl();
+    if (url === null) return;
+    if (isConversationUrl(cfg, url)) {
+      await chrome.storage.local.set({ [cfg.sessionStorageKey]: url });
+      return;
+    }
+  }
+}
+
 async function getOrCreateSessionTab(cfg) {
   const stored = await chrome.storage.local.get(cfg.sessionStorageKey);
   const savedUrl = stored[cfg.sessionStorageKey];
 
-  if (savedUrl) {
+  // Only trust a stored value that is genuinely a conversation URL. Anything
+  // else (a composer URL saved by an older build, or a half-finished run) is
+  // discarded so we create one real chat and settle on it, rather than
+  // treating the "new chat" page as if it were an ongoing conversation.
+  if (savedUrl && !isConversationUrl(cfg, savedUrl)) {
+    await chrome.storage.local.remove(cfg.sessionStorageKey).catch(() => {});
+  }
+
+  if (savedUrl && isConversationUrl(cfg, savedUrl)) {
     // chrome.tabs.query searches across every window, so this still finds
     // the session tab regardless of which (dedicated) window it lives in.
-    const openTabs = await chrome.tabs.query({ url: `${savedUrl}*` });
-    if (openTabs.length > 0) {
-      let reused = openTabs[0];
+    const existing = await findTabByUrl(savedUrl);
+    if (existing) {
+      let reused = existing;
       await chrome.tabs.update(reused.id, { autoDiscardable: false }).catch(() => {});
 
       if (reused.discarded) {
@@ -645,14 +862,25 @@ async function getOrCreateSessionTab(cfg) {
       return { tab: reused, isNewChat: false };
     }
 
+    // Saved conversation isn't open anywhere — reopen it in its own window.
     try {
-      const win = await chrome.windows.create({ url: savedUrl, focused: false, type: "normal", ...SESSION_WINDOW_SIZE });
-      const tab = win.tabs[0];
+      const tab = await createSessionWindow(savedUrl);
       await chrome.tabs.update(tab.id, { autoDiscardable: false }).catch(() => {});
       await waitForTabComplete(tab.id);
       await new Promise((r) => setTimeout(r, 1000));
       const reopened = await chrome.tabs.get(tab.id);
-      if (reopened.url?.startsWith(cfg.hostPattern)) return { tab: reopened, isNewChat: false };
+
+      // Check we actually landed back IN that conversation. The old check
+      // only asked "is this still on the provider's domain", which a redirect
+      // to the composer (deleted chat, signed-out, etc.) also satisfies — so a
+      // dead conversation silently became "reuse this" and every note went
+      // into a fresh chat instead.
+      if (isConversationUrl(cfg, reopened.url)) {
+        return { tab: reopened, isNewChat: false };
+      }
+
+      // Conversation is gone — forget it and start a fresh one in this window.
+      await chrome.storage.local.remove(cfg.sessionStorageKey).catch(() => {});
       await chrome.tabs.update(tab.id, { url: cfg.baseUrl });
       await waitForTabComplete(tab.id);
       await new Promise((r) => setTimeout(r, 1000));
@@ -662,8 +890,7 @@ async function getOrCreateSessionTab(cfg) {
     }
   }
 
-  const win = await chrome.windows.create({ url: cfg.baseUrl, focused: false, type: "normal", ...SESSION_WINDOW_SIZE });
-  const tab = win.tabs[0];
+  const tab = await createSessionWindow(cfg.baseUrl);
   await chrome.tabs.update(tab.id, { autoDiscardable: false }).catch(() => {});
   await waitForTabComplete(tab.id);
   await new Promise((r) => setTimeout(r, 1000));
@@ -707,6 +934,101 @@ async function withBriefTabFocus(tab, func) {
   return resultPromise;
 }
 
+// Runs automateChatInPage in the session tab, retrying once if the page
+// navigated out from under the injected script.
+//
+// "Frame with ID 0 was removed" / "No frame with id 0" is what Chrome throws
+// when the target frame is torn down mid-injection — which is exactly what a
+// provider does on a *brand-new* chat when it swaps the composer route for
+// the real conversation route. The script dies with it and the run is lost.
+// Retrying after the navigation settles lands in the (now stable)
+// conversation, so a first-run send no longer gets thrown away.
+async function runAutomation(cfg, tab, promptText) {
+  const attempt = async () =>
+    withBriefTabFocus(tab, async () => {
+      const res = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: automateChatInPage,
+        args: [cfg, promptText],
+      });
+      if (!res.length) {
+        throw new Error("The tab reloaded or closed mid-automation — please try again.");
+      }
+      return res[0]?.result;
+    });
+
+  try {
+    return await attempt();
+  } catch (err) {
+    const navigatedAway = /frame with id|frame was removed|no frame|reloaded or closed/i.test(
+      err?.message || ""
+    );
+    if (!navigatedAway) throw err;
+
+    await waitForTabComplete(tab.id).catch(() => {});
+    await new Promise((r) => setTimeout(r, 1500));
+
+    // If that navigation was the provider creating the conversation, the
+    // prompt already went through — don't send it a second time.
+    const settledUrl = await chrome.tabs.get(tab.id).then((t) => t.url).catch(() => null);
+    if (isConversationUrl(cfg, settledUrl)) {
+      const recovered = await chrome.scripting
+        .executeScript({
+          target: { tabId: tab.id },
+          func: scrapeLatestResponse,
+          args: [cfg],
+        })
+        .then((r) => r[0]?.result)
+        .catch(() => null);
+      if (recovered) return recovered;
+    }
+
+    return attempt();
+  }
+}
+
+// Read the newest assistant message already present in the page, without
+// sending anything. Used to recover a response whose automation run was
+// killed by a mid-flight navigation.
+function scrapeLatestResponse(cfg) {
+  return (async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    function readText(el) {
+      if (!el) return "";
+      const rendered = el.innerText;
+      if (rendered && rendered.trim().length > 0) return rendered.trim();
+      return (el.textContent || "").trim();
+    }
+    function latest() {
+      for (const sel of cfg.responseSelectors) {
+        const els = document.querySelectorAll(sel);
+        if (els.length) return els[els.length - 1];
+      }
+      return null;
+    }
+    function stopping() {
+      return cfg.stopSelectors.some((s) => document.querySelector(s));
+    }
+
+    const deadline = Date.now() + 120_000;
+    let lastText = "";
+    let stable = 0;
+    while (Date.now() < deadline) {
+      const text = readText(latest());
+      if (text && !stopping()) {
+        if (text === lastText) {
+          if (++stable >= 3) return text;
+        } else {
+          stable = 0;
+        }
+      }
+      lastText = text;
+      await sleep(500);
+    }
+    return lastText;
+  })();
+}
+
 function tryRenameConversation(cfg, title) {
   try {
     for (const sel of cfg.titleSelectors || []) {
@@ -735,17 +1057,7 @@ async function getNotesViaWebSession(provider, rawContent, topicOverride) {
   const promptText = buildPrompt(rawContent, topicOverride);
   let result;
   try {
-    result = await withBriefTabFocus(tab, async () => {
-      const res = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: automateChatInPage,
-        args: [cfg, promptText],
-      });
-      if (!res.length) {
-        throw new Error("The tab reloaded or closed mid-automation — please try again.");
-      }
-      return res[0]?.result;
-    });
+    result = await runAutomation(cfg, tab, promptText);
 
     if (isNewChat) {
       await chrome.scripting
@@ -759,14 +1071,9 @@ async function getNotesViaWebSession(provider, rawContent, topicOverride) {
   } catch (err) {
     throw new Error(`Automation failed on ${cfg.label}: ${err.message}`);
   } finally {
-    try {
-      const finalTab = await chrome.tabs.get(tab.id);
-      if (finalTab.url?.startsWith(cfg.hostPattern)) {
-        await chrome.storage.local.set({ [cfg.sessionStorageKey]: finalTab.url });
-      }
-    } catch {
-      /* non-fatal */
-    }
+    // Remember the conversation we ended up in, so the next note/message
+    // continues inside it instead of opening yet another chat.
+    await persistSessionUrl(cfg, tab.id).catch(() => {});
   }
 
   if (!result) throw new Error(`No response captured from ${cfg.label}. Please make sure you are signed in.`);
@@ -788,38 +1095,25 @@ async function sendChatMessageViaWebSession(provider, userMessage, contextHistor
 
   let result;
   try {
-    result = await withBriefTabFocus(tab, async () => {
-      const res = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: automateChatInPage,
-        args: [cfg, formattedPrompt],
-      });
-      if (!res.length) {
-        throw new Error("The tab reloaded or closed mid-automation — please try again.");
-      }
-      return res[0]?.result;
-    });
+    result = await runAutomation(cfg, tab, formattedPrompt);
 
     if (isNewChat) {
       await chrome.scripting
         .executeScript({
           target: { tabId: tab.id },
+          // Notes and the Chat Hub deliberately share one conversation per
+          // provider, so they share one title too.
           func: tryRenameConversation,
-          args: [cfg, "NoteFlow AI — Chat Hub"],
+          args: [cfg, SESSION_CHAT_TITLE],
         })
         .catch(() => {});
     }
   } catch (err) {
     throw new Error(`Chat failed on ${cfg.label}: ${err.message}`);
   } finally {
-    try {
-      const finalTab = await chrome.tabs.get(tab.id);
-      if (finalTab.url?.startsWith(cfg.hostPattern)) {
-        await chrome.storage.local.set({ [cfg.sessionStorageKey]: finalTab.url });
-      }
-    } catch {
-      /* non-fatal */
-    }
+    // Remember the conversation we ended up in, so the next note/message
+    // continues inside it instead of opening yet another chat.
+    await persistSessionUrl(cfg, tab.id).catch(() => {});
   }
 
   if (!result) throw new Error(`No response from ${cfg.label}.`);

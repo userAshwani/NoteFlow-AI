@@ -176,13 +176,37 @@ $("sortSelect").addEventListener("change", (e) => {
   refreshNotesDisplay();
 });
 
+// True whenever the stream is showing something other than "everything".
+// The incremental DOM path (syncNotesToDOM) can't honour a filter — it only
+// appends/replaces individual cards — so when this is on we fall back to a
+// full re-render instead, otherwise notes that don't match the search would
+// pop into a filtered list.
+function isFilterActive() {
+  return Boolean(_searchText) || _activeFilter !== "all";
+}
+
 function applyFilterAndSort(notes, pinnedIds) {
   let list = [...notes];
 
   if (_searchText) {
+    // Match on every field the user can actually see on a card, so searching
+    // for a provider name or a source domain works as well as topic text.
+    const terms = _searchText.split(/\s+/).filter(Boolean);
     list = list.filter((n) => {
-      const corpus = [n.topicTitle, n.summary, ...(n.takeaways || []), n.code || ""].join(" ").toLowerCase();
-      return corpus.includes(_searchText);
+      const corpus = [
+        n.topicTitle,
+        n.summary,
+        ...(n.takeaways || []),
+        n.code || "",
+        n.codeLanguage || "",
+        n.sourceUrl || "",
+        PROVIDER_INFO[n.provider]?.label || n.provider || "",
+      ]
+        .join(" ")
+        .toLowerCase();
+      // Every word must appear — "array method" shouldn't match a note that
+      // only contains "array".
+      return terms.every((t) => corpus.includes(t));
     });
   }
 
@@ -466,6 +490,34 @@ async function renderAllNotes(notesList) {
 
   emptyEl.classList.add("hidden");
 
+  // Filter/search matched nothing: say so explicitly. Previously this left a
+  // blank pane (the empty state is hidden because notes DO exist), which read
+  // as "search is broken" rather than "no matches".
+  if (!filteredDone.length && doneNotes.length && isFilterActive()) {
+    const none = document.createElement("div");
+    none.className = "no-results-card";
+    none.innerHTML = `
+      <div class="no-results-emoji">🔍</div>
+      <h3 class="no-results-title">No topics match your search</h3>
+      <p class="no-results-sub">
+        ${_searchText ? `Nothing found for <strong>"${escHtml(_searchText)}"</strong>` : "No topics match this filter"}
+        across ${doneNotes.length} saved topic${doneNotes.length === 1 ? "" : "s"}.
+      </p>
+      <button class="no-results-reset" id="resetFiltersBtn">Clear search &amp; filters</button>
+    `;
+    root.appendChild(none);
+    $("resetFiltersBtn").addEventListener("click", () => {
+      $("searchInput").value = "";
+      _searchText = "";
+      _activeFilter = "all";
+      $("searchClear").classList.add("hidden");
+      document.querySelectorAll(".filter-chip").forEach((b) => {
+        b.classList.toggle("active", b.dataset.filter === "all");
+      });
+      refreshNotesDisplay();
+    });
+  }
+
   let doneIdx = 0;
   filteredDone.forEach((note) => {
     root.appendChild(buildNoteCard(note, doneIdx++, pinnedIds));
@@ -491,6 +543,14 @@ async function syncNotesToDOM(newList) {
   if (newList.length === 0) {
     _currentNotesList = [];
     await renderAllNotes([]);
+    return;
+  }
+
+  // A search/filter is on: the incremental path below would append cards that
+  // don't match it, so re-render the (filtered) stream from scratch instead.
+  if (isFilterActive()) {
+    _currentNotesList = newList;
+    await renderAllNotes(newList);
     return;
   }
 
@@ -1120,47 +1180,190 @@ $("ccYes").addEventListener("click", async () => {
 });
 
 // Export HTML
-$("exportHtmlBtn").addEventListener("click", async () => {
+// ── Export menu ──────────────────────────────────────────────────────────────
+
+function stampedName(ext) {
+  return `noteflow-notes-${new Date().toISOString().slice(0, 10)}.${ext}`;
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = Object.assign(document.createElement("a"), { href: url, download: filename });
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Revoke on the next tick — revoking synchronously can cancel the download.
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+async function getExportNotes() {
   const { notesList = [] } = await chrome.storage.local.get("notesList");
-  const pinnedIds = await getPinnedIds();
-  const theme = document.documentElement.getAttribute("data-theme") || "light";
   const done = notesList.filter((n) => n.status === "done");
+  const pinnedIds = await getPinnedIds();
+  // Export in exactly the order the dashboard is currently showing.
+  return { notes: applyFilterAndSort(done, pinnedIds), pinnedIds };
+}
 
-  const styleResp = await fetch("viewer.css");
-  const css = await styleResp.text();
-  const body = done.map((n, i) => buildNoteCard(n, i, pinnedIds).outerHTML).join("");
+function closeExportMenu() {
+  $("exportMenu").classList.add("hidden");
+  $("exportBtn").parentElement.classList.remove("open");
+  $("exportBtn").setAttribute("aria-expanded", "false");
+}
 
-  const doc = `<!DOCTYPE html>
+$("exportBtn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  const menu = $("exportMenu");
+  const isOpen = !menu.classList.contains("hidden");
+  if (isOpen) {
+    closeExportMenu();
+  } else {
+    menu.classList.remove("hidden");
+    $("exportBtn").parentElement.classList.add("open");
+    $("exportBtn").setAttribute("aria-expanded", "true");
+  }
+});
+
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".export-wrap")) closeExportMenu();
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeExportMenu();
+});
+
+document.querySelectorAll(".export-item").forEach((item) => {
+  item.addEventListener("click", async () => {
+    closeExportMenu();
+    const kind = item.dataset.export;
+    try {
+      await runExport(kind);
+    } catch (err) {
+      showToast(`⚠ Export failed: ${err.message}`);
+    }
+  });
+});
+
+async function runExport(kind) {
+  const { notes, pinnedIds } = await getExportNotes();
+
+  if (!notes.length && kind !== "json") {
+    showToast("Nothing to export yet");
+    return;
+  }
+
+  if (kind === "pdf") {
+    // The print stylesheet in viewer.css strips the app chrome, so the
+    // browser's own print dialog ("Save as PDF") renders just the notes.
+    showToast("Opening print dialog…");
+    setTimeout(() => window.print(), 120);
+    return;
+  }
+
+  if (kind === "docx") {
+    // Same builder the DOCX auto-sync uses, so a downloaded file and a
+    // synced file are byte-for-byte the same document.
+    const bytes = window.NoteFlowDocx.buildBytes(notes);
+    downloadBlob(
+      new Blob([bytes], {
+        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      }),
+      stampedName("docx")
+    );
+    showToast("Word document exported");
+    return;
+  }
+
+  if (kind === "html") {
+    const theme = document.documentElement.getAttribute("data-theme") || "light";
+    const css = await (await fetch("viewer.css")).text();
+    const body = notes.map((n, i) => buildNoteCard(n, i, pinnedIds).outerHTML).join("");
+
+    const doc = `<!DOCTYPE html>
 <html lang="en" data-theme="${theme}">
 <head>
   <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>NoteFlow AI — Exported Knowledge Base</title>
   <style>
     ${css}
-    .app-topbar, .app-sidebar, .card-action-bar, .stream-toolbar, .confirm-alert-bar, .btn-copy-code { display: none !important; }
+    .app-topbar, .app-sidebar, .card-action-bar, .stream-toolbar,
+    .confirm-alert-bar, .btn-copy-code, .export-menu { display: none !important; }
     .app-container { display: block; max-width: 900px; margin: 0 auto; }
     .app-main { padding: 40px 20px; }
+    .export-doc-head { margin-bottom: 26px; }
+    .export-doc-title { font-size: 28px; font-weight: 800; color: var(--text-main); }
+    .export-doc-sub { font-size: 13px; color: var(--text-dim); margin-top: 4px; }
   </style>
 </head>
 <body>
   <div class="app-container">
     <main class="app-main">
-      <h1 style="font-size: 28px; font-weight: 800; margin-bottom: 24px; color: var(--text-main);">NoteFlow AI Notes</h1>
+      <header class="export-doc-head">
+        <div class="export-doc-title">NoteFlow AI — Study Notes</div>
+        <div class="export-doc-sub">
+          ${notes.length} topic${notes.length === 1 ? "" : "s"} ·
+          exported ${new Date().toLocaleString()} · ashwanitiwari.com
+        </div>
+      </header>
       <div class="notes-stream">${body}</div>
     </main>
   </div>
 </body>
 </html>`;
 
-  const a = Object.assign(document.createElement("a"), {
-    href: URL.createObjectURL(new Blob([doc], { type: "text/html" })),
-    download: `noteflow-notes-${new Date().toISOString().slice(0, 10)}.html`,
-  });
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  showToast("HTML document exported");
-});
+    downloadBlob(new Blob([doc], { type: "text/html" }), stampedName("html"));
+    showToast("HTML document exported");
+    return;
+  }
+
+  if (kind === "md") {
+    const md = notes
+      .map((n, i) => {
+        const meta = [
+          PROVIDER_INFO[n.provider]?.label || n.provider,
+          n.createdAt ? fmtDate(n.createdAt) : null,
+        ]
+          .filter(Boolean)
+          .join(" · ");
+
+        let s = `## ${i + 1}. ${n.topicTitle || "Untitled"}\n`;
+        if (meta) s += `\n_${meta}_\n`;
+        if (n.summary) s += `\n${n.summary}\n`;
+        if (n.takeaways?.length) {
+          s += `\n**Key Takeaways**\n\n${n.takeaways.map((t) => `- ${t}`).join("\n")}\n`;
+        }
+        if (n.code) {
+          s += `\n\`\`\`${n.codeLanguage || ""}\n${n.code}\n\`\`\`\n`;
+        }
+        if (n.sourceUrl) s += `\n[Source](${n.sourceUrl})\n`;
+        return s;
+      })
+      .join("\n---\n\n");
+
+    const header =
+      `# NoteFlow AI — Study Notes\n\n` +
+      `> ${notes.length} topic${notes.length === 1 ? "" : "s"} · exported ${new Date().toLocaleString()}\n\n`;
+
+    downloadBlob(new Blob([header + md], { type: "text/markdown" }), stampedName("md"));
+    showToast("Markdown exported");
+    return;
+  }
+
+  if (kind === "json") {
+    const payload = {
+      app: "NoteFlow AI",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      count: notes.length,
+      notes,
+    };
+    downloadBlob(
+      new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }),
+      stampedName("json")
+    );
+    showToast("JSON backup exported");
+  }
+}
 
 // Copy All
 $("copyAllBtn").addEventListener("click", async () => {

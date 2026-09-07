@@ -1,0 +1,7 @@
+# Chrome-generated cache for unpacked extensions using declarativeNetRequest.
+# Regenerated automatically on load — should not be committed.
+_metadata/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db

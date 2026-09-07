@@ -157,14 +157,34 @@ function escapeXml(str) {
     .replace(/'/g, "&apos;");
 }
 
-function runXml(text, { bold, italic, size, font, color } = {}) {
-  // CT_RPr children must appear in schema order (rFonts, b, i, ..., color,
-  // ..., sz, ...) — Word tolerates some drift, but this keeps it strictly valid.
+// ── NoteFlow palette, mirrored from viewer.css so the .docx reads as the same
+// document as the dashboard (indigo / tech-blue / slate, no warm accents) ────
+const DX = {
+  indigo: "4F46E5",
+  indigoDeep: "3730A3",
+  blue: "2563EB",
+  slate900: "0F172A",
+  slate700: "334155",
+  slate500: "64748B",
+  slate300: "CBD5E1",
+  tintIndigo: "EEF2FF",
+  tintSlate: "F1F5F9",
+  codeBg: "0F172A",
+  codeText: "E2E8F0",
+  white: "FFFFFF",
+};
+
+function runXml(text, { bold, italic, size, font, color, caps, spacingPt } = {}) {
+  // CT_RPr children must appear in schema order (rFonts, b, i, caps, color,
+  // spacing, sz, ...) — Word tolerates some drift, but this keeps it strictly
+  // valid so the file never opens as "repaired".
   const props = [];
   if (font) props.push(`<w:rFonts w:ascii="${escapeXml(font)}" w:hAnsi="${escapeXml(font)}"/>`);
   if (bold) props.push("<w:b/>");
   if (italic) props.push("<w:i/>");
+  if (caps) props.push("<w:caps/>");
   if (color) props.push(`<w:color w:val="${color}"/>`);
+  if (spacingPt) props.push(`<w:spacing w:val="${spacingPt}"/>`);
   if (size) props.push(`<w:sz w:val="${size}"/>`);
   const rPr = props.length ? `<w:rPr>${props.join("")}</w:rPr>` : "";
 
@@ -175,49 +195,199 @@ function runXml(text, { bold, italic, size, font, color } = {}) {
   return `<w:r>${rPr}${runs}</w:r>`;
 }
 
-function paragraphXml(runsXml, { spacingAfter } = {}) {
-  const pPr = spacingAfter ? `<w:pPr><w:spacing w:after="${spacingAfter}"/></w:pPr>` : "";
+// CT_PPr children are order-sensitive: pBdr → shd → spacing → ind → jc.
+// Getting this wrong is what makes Word offer to "repair" a document.
+function paragraphXml(
+  runsXml,
+  { spacingAfter, spacingBefore, shade, leftBar, barColor, bottomRule, indentLeft, lineRule } = {}
+) {
+  const bits = [];
+
+  if (leftBar || bottomRule) {
+    const borders = [];
+    if (leftBar) {
+      borders.push(`<w:left w:val="single" w:sz="24" w:space="10" w:color="${barColor || DX.indigo}"/>`);
+    }
+    if (bottomRule) {
+      borders.push(`<w:bottom w:val="single" w:sz="6" w:space="6" w:color="${DX.slate300}"/>`);
+    }
+    bits.push(`<w:pBdr>${borders.join("")}</w:pBdr>`);
+  }
+
+  if (shade) bits.push(`<w:shd w:val="clear" w:color="auto" w:fill="${shade}"/>`);
+
+  if (spacingAfter || spacingBefore || lineRule) {
+    const attrs = [];
+    if (spacingBefore) attrs.push(`w:before="${spacingBefore}"`);
+    if (spacingAfter) attrs.push(`w:after="${spacingAfter}"`);
+    if (lineRule) attrs.push(`w:line="${lineRule}" w:lineRule="auto"`);
+    bits.push(`<w:spacing ${attrs.join(" ")}/>`);
+  }
+
+  if (indentLeft) bits.push(`<w:ind w:left="${indentLeft}"/>`);
+
+  const pPr = bits.length ? `<w:pPr>${bits.join("")}</w:pPr>` : "";
   return `<w:p>${pPr}${runsXml}</w:p>`;
 }
 
+const PROVIDER_LABELS = {
+  "gemini-web": "Gemini",
+  "chatgpt-web": "ChatGPT",
+  "claude-web": "Claude",
+  "perplexity-web": "Perplexity",
+  "deepseek-web": "DeepSeek",
+};
+
+function fmtDocxDate(iso) {
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "";
+  }
+}
+
+// Mirrors the dashboard card layout: indigo numbered heading, a muted meta
+// line, the summary in a tinted callout with an indigo left bar, small-caps
+// section labels, indigo diamond bullets, and code in a dark block.
 function buildDocumentXml(notes) {
   const parts = [];
+
+  // ── Masthead ──────────────────────────────────────────────────────────────
   parts.push(
-    paragraphXml(runXml("NoteFlow AI — Study Notes", { bold: true, size: 44 }), { spacingAfter: 300 })
+    paragraphXml(runXml("NoteFlow AI", { bold: true, size: 48, color: DX.indigoDeep }), { spacingAfter: 40 })
   );
   parts.push(
-    paragraphXml(runXml(`Synced ${new Date().toLocaleString()}`, { italic: true, size: 18, color: "666666" }), {
-      spacingAfter: 400,
-    })
+    paragraphXml(
+      runXml("STUDY NOTES WORKSPACE", { bold: true, size: 18, color: DX.slate500, caps: true, spacingPt: 60 }),
+      { spacingAfter: 120 }
+    )
   );
+  parts.push(
+    paragraphXml(
+      runXml(
+        `${notes.length} topic${notes.length === 1 ? "" : "s"}  ·  Updated ${fmtDocxDate(new Date().toISOString())}`,
+        { size: 18, color: DX.slate500 }
+      ),
+      { spacingAfter: 160, bottomRule: true }
+    )
+  );
+  parts.push(paragraphXml("", { spacingAfter: 200 }));
 
   if (!notes.length) {
-    parts.push(paragraphXml(runXml("No notes captured yet.", { italic: true, size: 22, color: "888888" })));
+    parts.push(
+      paragraphXml(runXml("No notes captured yet.", { italic: true, size: 22, color: DX.slate500 }), {
+        shade: DX.tintSlate,
+        spacingAfter: 200,
+      })
+    );
   }
 
   notes.forEach((note, i) => {
+    // ── Numbered topic heading ──────────────────────────────────────────────
     parts.push(
-      paragraphXml(runXml(`${i + 1}. ${note.topicTitle || "Untitled"}`, { bold: true, size: 28 }), {
-        spacingAfter: 120,
-      })
+      paragraphXml(
+        runXml(`${i + 1}.  `, { bold: true, size: 30, color: DX.blue }) +
+          runXml(note.topicTitle || "Untitled", { bold: true, size: 30, color: DX.slate900 }),
+        { spacingBefore: 240, spacingAfter: 60 }
+      )
     );
+
+    // ── Meta line: engine · date · source ───────────────────────────────────
+    const meta = [];
+    if (note.provider) meta.push(PROVIDER_LABELS[note.provider] || note.provider);
+    if (note.createdAt) meta.push(fmtDocxDate(note.createdAt));
+    if (meta.length) {
+      parts.push(
+        paragraphXml(runXml(meta.join("  ·  "), { size: 17, color: DX.slate500 }), { spacingAfter: 140 })
+      );
+    }
+
+    // ── Summary callout: tinted background + indigo left bar ────────────────
     if (note.summary) {
-      parts.push(paragraphXml(runXml(note.summary, { size: 22 }), { spacingAfter: 160 }));
+      parts.push(
+        paragraphXml(runXml(note.summary, { size: 22, color: DX.slate700 }), {
+          shade: DX.tintIndigo,
+          leftBar: true,
+          barColor: DX.indigo,
+          indentLeft: 180,
+          spacingAfter: 200,
+          lineRule: 276,
+        })
+      );
     }
+
+    // ── Key takeaways ───────────────────────────────────────────────────────
     if (note.takeaways?.length) {
-      parts.push(paragraphXml(runXml("Key Takeaways", { bold: true, size: 22 }), { spacingAfter: 80 }));
+      parts.push(
+        paragraphXml(
+          runXml("KEY TAKEAWAYS", { bold: true, size: 17, color: DX.indigoDeep, caps: true, spacingPt: 60 }),
+          { spacingAfter: 90 }
+        )
+      );
       note.takeaways.forEach((t) => {
-        parts.push(paragraphXml(runXml(`•  ${t}`, { size: 22 }), { spacingAfter: 60 }));
+        parts.push(
+          paragraphXml(
+            runXml("◆   ", { size: 20, color: DX.indigo }) + runXml(String(t), { size: 21, color: DX.slate700 }),
+            { indentLeft: 220, spacingAfter: 80, lineRule: 264 }
+          )
+        );
       });
+      parts.push(paragraphXml("", { spacingAfter: 100 }));
     }
+
+    // ── Code block: dark slate panel, light monospace text ──────────────────
     if (note.code) {
-      parts.push(paragraphXml(runXml(note.code, { font: "Consolas", size: 20 }), { spacingAfter: 160 }));
+      parts.push(
+        paragraphXml(
+          runXml((note.codeLanguage || "code").toUpperCase(), {
+            bold: true,
+            size: 15,
+            color: DX.slate500,
+            caps: true,
+            spacingPt: 60,
+          }),
+          { spacingAfter: 60 }
+        )
+      );
+      parts.push(
+        paragraphXml(runXml(note.code, { font: "Consolas", size: 18, color: DX.codeText }), {
+          shade: DX.codeBg,
+          indentLeft: 160,
+          spacingAfter: 180,
+          lineRule: 264,
+        })
+      );
     }
+
+    // ── Source link ─────────────────────────────────────────────────────────
     if (note.sourceUrl) {
-      parts.push(paragraphXml(runXml(`Source: ${note.sourceUrl}`, { size: 18, color: "0563C1" }), { spacingAfter: 100 }));
+      parts.push(
+        paragraphXml(
+          runXml("Source:  ", { size: 17, color: DX.slate500 }) +
+            runXml(note.sourceUrl, { size: 17, color: DX.blue }),
+          { spacingAfter: 120 }
+        )
+      );
     }
-    parts.push(paragraphXml("", { spacingAfter: 200 }));
+
+    // ── Divider between topics ──────────────────────────────────────────────
+    if (i < notes.length - 1) {
+      parts.push(paragraphXml("", { bottomRule: true, spacingAfter: 240 }));
+    }
   });
+
+  parts.push(
+    paragraphXml(
+      runXml("Generated by NoteFlow AI — ashwanitiwari.com", { size: 16, color: DX.slate500, italic: true }),
+      { spacingBefore: 360 }
+    )
+  );
 
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
@@ -391,4 +561,7 @@ window.NoteFlowDocx = {
   disconnect: disconnectDocxFile,
   sync: syncDocxNow,
   getStatus: getDocxStatus,
+  // Exposed so the viewer's "Export → Word" uses the exact same builder as
+  // the auto-sync path — a downloaded file and a synced file are identical.
+  buildBytes: buildDocxBytes,
 };

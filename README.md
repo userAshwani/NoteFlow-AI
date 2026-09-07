@@ -1,154 +1,243 @@
-# Ashwani Tiwari | Notes From AI — Chrome Extension
+# NoteFlow AI — Smart Web Summarizer
 
-Extracts content from the active webpage and summarizes it into laser-focused
-study notes by driving your own **already-logged-in** Gemini Web or ChatGPT
-Web session — no API keys, no OAuth, no external service. All notes flow
-into one reusable AI chat thread and a built-in **Notes Dashboard** tab.
+> Turn any article, tutorial, or documentation page into clean, structured
+> study notes — using the AI accounts you're **already logged into**.
+> No API keys. No subscriptions. No data leaving your browser.
 
-## ⚠️ Read this before using
+A Chrome extension (Manifest V3) that scrapes the page you're reading, sends it
+to your own signed-in Gemini / ChatGPT / Claude / Perplexity / DeepSeek web
+session, and files the result into a persistent, searchable knowledge
+dashboard you can export to PDF, Word, HTML, Markdown, or JSON.
 
-This automates the Gemini/ChatGPT **consumer web UI** (not their official
-APIs) from a tab you're signed into:
+**Developed by [Ashwani Tiwari](https://ashwanitiwari.com)**
 
-- **Brittle by nature.** `services/webSessionBridge.js` locates the chat
-  input, send button, response bubble, and (best-effort) conversation title
-  via CSS selectors in the `PROVIDERS` config at the top of that file.
-  Google and OpenAI change their web app's DOM without notice — when they
-  do, this breaks silently or times out. That config is the first place to
-  check and update.
-- **Terms of service.** This scripts the same UI a human would click
-  through, from your own logged-in tab — it does not touch credentials,
-  bypass logins/CAPTCHAs, or hide the automation from the site. It may
-  still fall outside a given provider's terms for automated use of their
-  consumer web app, separate from their official developer APIs. That
-  trade-off is yours to make.
-- **Timing.** Each run polls for up to ~2 minutes for the reply to finish
-  streaming. Slow connections or long pages may hit that ceiling.
+---
 
-## What's new in this version
+<!-- ══════════════════════════════════════════════════════════════════════════
+     SCREENSHOTS — add your images to a /screenshots folder and they'll render
+     ══════════════════════════════════════════════════════════════════════════ -->
 
-1. **Single reusable chat session.** Instead of resetting the conversation
-   on every scan, the extension now keeps one ongoing chat per provider —
-   "AI Study Notes Hub" — and reuses it:
-   - If that chat's tab is still open, the extension switches to it and
-     appends the new prompt into the ongoing conversation.
-   - If the tab was closed, it reopens the saved chat URL in a background,
-     pinned tab.
-   - If no chat is saved yet, or the saved one turns out to be gone
-     (deleted), it starts a fresh chat and saves its URL
-     (`geminiActiveChatUrl` / `chatgptActiveChatUrl` in
-     `chrome.storage.local`) for every future run.
-   - Each prompt still explicitly tells the model "this is a new, separate
-     lesson" so it doesn't blend context across topics even though they
-     share one thread.
-2. **Branding.** Popup and dashboard headers show "Ashwani Tiwari | Notes
-   From AI" with the `ashwanitiwari.com` logo (falls back to an inline SVG
-   monogram if the remote image fails to load) and a "Developed by
-   ashwanitiwari.com" footer badge.
-3. **Auto-launch dashboard.** As soon as a note finishes generating, the
-   extension automatically opens (or focuses, if already open)
-   `viewer.html`, which shows a toast — *"New topic successfully
-   appended!"* — and smooth-scrolls to the new topic.
-4. **Zero-fluff prompt.** The system prompt now explicitly forbids
-   introductory/filler text and caps the summary at 2 sentences, 3–5 key
-   points, and one clean, commented code example.
+## Screenshots
 
-## File structure
+### Study Notes Dashboard
+<!-- ![Study Notes Dashboard](screenshots/dashboard.png) -->
+_Add `screenshots/dashboard.png`_
+
+### Multi-AI Chat Hub
+<!-- ![Multi-AI Chat Hub](screenshots/chat-hub.png) -->
+_Add `screenshots/chat-hub.png`_
+
+### Extension Popup
+<!-- ![Extension Popup](screenshots/popup.png) -->
+_Add `screenshots/popup.png`_
+
+### Exported Word Document
+<!-- ![DOCX Export](screenshots/docx-export.png) -->
+_Add `screenshots/docx-export.png`_
+
+### Flashcard Study Mode
+<!-- ![Flashcards](screenshots/flashcards.png) -->
+_Add `screenshots/flashcards.png`_
+
+---
+
+## Features
+
+### Capture
+- **One-click capture** — read any page, click the extension, get structured notes.
+- **Five AI engines** — Gemini, ChatGPT, Claude, Perplexity, DeepSeek. The popup
+  auto-detects which ones you're signed into and only offers those.
+- **Zero-fluff prompt** — every note comes back as a short title, a 2-sentence
+  summary, 3–5 key points, and one clean code example.
+- **Single reusable chat** — all captures continue inside *one* conversation per
+  provider ("NoteFlow AI — Study Hub"), so your AI account doesn't fill up with
+  hundreds of one-message chats.
+
+### Organise
+- **Study Stream** — chronological feed of every topic you've captured.
+- **Full-text search** across titles, summaries, takeaways, code, source URLs
+  and engine names (multi-word: every word must match).
+- **Filters** — All / Pinned / With Code · **Sort** — newest, oldest, A–Z, pinned first.
+- **Sticky table of contents**, pin/unpin, delete-with-undo.
+- **Flashcard mode** — turn your takeaways into a click-through study deck.
+
+### Export
+| Format | What you get |
+| :-- | :-- |
+| **PDF** | Browser print dialog with a print stylesheet (app chrome stripped) |
+| **Word (.docx)** | Full-colour formatted document — indigo headings, tinted summary callouts, styled bullets, dark code blocks |
+| **HTML** | Self-contained page with the dashboard's styling baked in |
+| **Markdown** | Clean `.md` for Obsidian / Notion / GitHub |
+| **JSON** | Raw backup of every note |
+
+- **DOCX auto-sync** — pick a `.docx` file once, and every new note is written
+  into it automatically (via the File System Access API).
+
+### Chat
+- **Multi-AI Chat Hub** — talk to any connected model right inside the dashboard.
+- **Cross-model context handoff** — switch from Gemini to ChatGPT mid-conversation
+  and the new model gets briefed on what came before.
+- **Compare mode** — ask once, get answers from several models side by side.
+- **Save any reply as a note** with one click.
+
+### Everything else
+- Dark / light theme.
+- Notes persist in `chrome.storage.local` across restarts — only ever cleared
+  by the explicit **Clear All Notes** button.
+- No API keys, no accounts, no telemetry. Nothing is sent anywhere except to
+  the AI tab you were already signed into.
+
+---
+
+## Install (Developer Mode)
+
+1. Clone or download this repository.
+   ```bash
+   git clone https://github.com/<your-username>/notesFromAi.git
+   ```
+2. Open `chrome://extensions`.
+3. Turn on **Developer mode** (top right).
+4. Click **Load unpacked** and select the project folder
+   (the one containing `manifest.json` — not a subfolder).
+5. Pin **NoteFlow AI** to your toolbar.
+
+> **Troubleshooting:** if Chrome says *"File path cannot be resolved / Could not
+> load manifest"*, an old entry is pointing at a folder that no longer exists.
+> Remove that entry and run **Load unpacked** again on the correct folder.
+
+### Sign in to at least one AI
+
+The extension uses your existing browser sessions, so sign in to whichever you
+want to use before capturing:
+
+| Engine | URL |
+| :-- | :-- |
+| Gemini | https://gemini.google.com |
+| ChatGPT | https://chatgpt.com |
+| Claude | https://claude.ai |
+| Perplexity | https://www.perplexity.ai |
+| DeepSeek | https://chat.deepseek.com |
+
+The popup shows which sessions it detected. If an engine isn't listed, you
+aren't signed into it in this Chrome profile.
+
+---
+
+## How to use
+
+1. Open any article, tutorial, or docs page.
+2. Click the **NoteFlow AI** icon.
+3. Pick your AI engine (remembered for next time) and, optionally, a topic hint.
+4. Hit **Capture Page Notes**.
+5. The dashboard opens with a shimmering placeholder, then fills in with the
+   finished note. It's saved automatically.
+
+### What happens under the hood
 
 ```
-manifest.json                  Manifest V3 config, permissions
-background.js                  Service worker: orchestrates scan -> web session -> storage -> auto-open dashboard
-content.js                     Injected into the page to extract text/headings/code
-services/webSessionBridge.js   Session-tab management + DOM automation + response parsing
-popup.html/css/js              Provider picker + scan/clear/open-dashboard, branded header/footer
-viewer.html/css/js             Notes Dashboard: renders, TOC, dark mode, export, branded header/footer
-icons/                         Placeholder toolbar icons (replace with your own)
+content.js          scrapes readable text, headings and code from the page
+      ↓
+background.js       inserts a placeholder note, opens the dashboard
+      ↓
+webSessionBridge.js finds (or creates) your single AI conversation window,
+                    types the prompt, sends it, watches for the reply
+      ↓
+chrome.storage      the parsed note is saved; the dashboard updates live
 ```
 
-## 1. Load the extension (Developer Mode)
+---
 
-1. Open `chrome://extensions`.
-2. Toggle **Developer mode** on.
-3. Click **Load unpacked** and select this project folder.
+## Known behaviour: the focus flash
 
-No Google Cloud Console setup, no OAuth client, no credentials to manage.
+When a note is generated, the AI session window is briefly given focus (under a
+second) and then focus returns to you.
 
-## 2. Sign in
+This is deliberate and unavoidable. Chromium refuses to let a page's
+`execCommand`/selection APIs work in a window that has never held real OS
+focus, which leaves the AI's Send button permanently disabled. Three
+alternatives were tried and each is blocked by a deliberate Chrome protection:
 
-Before scanning, make sure you're signed in, in this Chrome profile, to
-whichever provider you plan to use:
+| Attempt | Why it failed |
+| :-- | :-- |
+| Hidden `<iframe>` | Cross-site iframe = third-party storage partition; the AI site's own session calls start returning 403 |
+| Off-screen window | Chrome refuses windows positioned mostly off-screen ("bounds must be at least 50% within visible screen space") |
+| `chrome.debugger` | Shows a "started debugging this browser" banner on whatever tab you're looking at |
 
-- Gemini Web: https://gemini.google.com
-- ChatGPT Web: https://chatgpt.com
+Current design runs each AI session in its **own dedicated window**, because
+Chromium suspends rendering for a background *tab* unconditionally, but not for
+an unfocused window that is still visible. Full history in
+[`PROBLEM_ANALYSIS.md`](PROBLEM_ANALYSIS.md).
 
-## 3. Use it
+---
 
-1. Click the extension icon and pick a provider (**Gemini Web** or
-   **ChatGPT Web**) — saved automatically.
-2. Navigate to the article/docs page you want notes from.
-3. (Optional) Enter a topic title override.
-4. Click **Scan & Add to Notes**. The status badge walks through:
-   - `[1/3] Extracting page content...`
-   - `[2/3] Sending to Gemini / ChatGPT tab...`
-   - `[3/3] Generating & appending to Notes...`
-   - `Appended Successfully`
-5. The Notes Dashboard opens/focuses automatically with the new topic
-   visible and a confirmation toast.
-6. Because the dashboard also listens for `chrome.storage.onChanged`, if
-   you leave it open and scan another page, the new topic appears
-   instantly — no reload needed.
-7. Use **Clear All Notes** in the popup (with confirmation) to wipe
-   everything. This is the *only* way notes are ever deleted — they
-   otherwise persist in `chrome.storage.local` across browser restarts and
-   device reboots.
+## Project structure
 
-## Notes Dashboard features
+```
+manifest.json               MV3 config, permissions, DNR ruleset
+background.js               Service worker — capture pipeline, message router
+content.js                  Page scraper (text, headings, code blocks)
+rules.json                  declarativeNetRequest header rules
+services/
+  webSessionBridge.js       AI session windows, DOM automation, response capture
+  docxSync.js               Hand-rolled OOXML/ZIP .docx writer + File System Access sync
+popup.html / .js / .css     Engine detection, capture trigger
+viewer.html / .js / .css    Dashboard: notes stream, chat hub, exports, flashcards
+icons/                      Toolbar icons
+PROBLEM_ANALYSIS.md         Engineering log of the background-automation problem
+```
 
-- Sticky sidebar table of contents.
-- Dark / light mode toggle, persisted per-browser.
-- **Copy Code** button on every code block.
-- **Export as HTML** — downloads a self-contained, styled HTML file.
-- **Print / Save as PDF**.
-- **Copy Full Document** — plain-text copy of all notes.
+---
 
-## Updating selectors when a provider's UI changes
+## When a provider changes its UI
 
-Open `services/webSessionBridge.js` and edit the relevant entry in
-`PROVIDERS`:
+This automates real web UIs, so provider redesigns will eventually break a
+selector. Everything is centralised in the `PROVIDERS` map at the top of
+[`services/webSessionBridge.js`](services/webSessionBridge.js):
 
 ```js
 "gemini-web": {
-  inputSelectors: [...],   // the chat text box
-  sendSelectors: [...],    // the send button
-  stopSelectors: [...],    // the "stop generating" button shown while streaming
-  responseSelectors: [...],// the assistant's reply bubble(s)
-  titleSelectors: [...],   // (best-effort) the conversation's title element in the sidebar
+  conversationUrlPattern: /…/,  // what a real conversation URL looks like
+  inputSelectors:  [...],       // the chat text box
+  sendSelectors:   [...],       // the send button
+  stopSelectors:   [...],       // the "stop generating" button
+  responseSelectors: [...],     // the assistant's reply bubble
 }
 ```
 
-Each is a prioritized list — the bridge tries each selector in order and
-uses the first match, so you can add a new selector without removing the
-old one.
+Each is a prioritised list — the bridge uses the first selector that matches,
+so you can add a new one without removing the old.
 
-## AI prompt contract
+---
 
-```json
-{"topicTitle": "...", "summary": "...", "takeaways": ["..."], "code": "...", "codeLanguage": "javascript"}
-```
+## Privacy & security
 
-`webSessionBridge.js` strips markdown fences and parses this before
-`background.js` appends it, with a generated id/timestamp/source
-URL/provider, to `chrome.storage.local.notesList`.
+- **No API keys, no accounts, no servers.** The extension has no backend.
+- **Nothing is transmitted** anywhere except to the AI tab you were already
+  signed into, exactly as if you'd pasted the text yourself.
+- **All notes stay local** in `chrome.storage.local`, on your device.
+- AI-generated text is HTML-escaped before rendering, so it can't inject markup
+  into the dashboard.
+- `<all_urls>` is requested so you can capture from any page — `content.js` is
+  only ever injected into the tab you explicitly capture from, never in the
+  background.
 
-## Security notes
+### A note on terms of service
 
-- No API keys exist anywhere in this extension.
-- All notes are stored in `chrome.storage.local` (device-local, never
-  synced or sent anywhere except to the AI tab you already had open).
-- Note content is escaped before being inserted into the dashboard's DOM
-  (`viewer.js`'s `escapeHtml`), so AI-generated text can't inject markup
-  even though it's rendered via `innerHTML`.
-- `<all_urls>` host permission is required so the popup can scan whatever
-  page you're currently reading — the extension only ever injects
-  `content.js` into the tab you explicitly scan from the popup, never in
-  the background.
+NoteFlow AI drives the same web interface a human clicks through, from your own
+logged-in session. It does not touch credentials, bypass logins or CAPTCHAs, or
+hide itself from the site. That said, automating a consumer web app may fall
+outside a given provider's terms of service, separate from their official
+developer APIs. Use your judgement.
+
+---
+
+## License
+
+MIT — see [`LICENSE`](LICENSE) if present, otherwise released as-is for
+personal and educational use.
+
+---
+
+<p align="center">
+  Built by <a href="https://ashwanitiwari.com"><b>ashwanitiwari.com</b></a>
+</p>
